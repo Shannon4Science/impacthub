@@ -368,6 +368,35 @@ class Advisor(Base):
     college: Mapped["AdvisorCollege"] = relationship(back_populates="advisors")
 
 
+class AdvisorMention(Base):
+    """A 公众号 article / 小红书 post / 知乎 answer / forum thread that mentions
+    a specific advisor. The collection side (你来负责) is decoupled — this table
+    is pure storage. Bulk-imported via scripts/import_advisor_mentions.py.
+    """
+    __tablename__ = "advisor_mentions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    advisor_id: Mapped[int] = mapped_column(ForeignKey("advisors.id"))
+    source: Mapped[str] = mapped_column(String(30))            # wechat / xiaohongshu / zhihu / forum / other
+    source_account: Mapped[str] = mapped_column(String(120), default="")  # 公众号名 / 小红书账号
+    title: Mapped[str] = mapped_column(Text, default="")
+    url: Mapped[str] = mapped_column(String(500), default="")
+    snippet: Mapped[str] = mapped_column(Text, default="")     # excerpt / summary
+    cover_url: Mapped[str] = mapped_column(String(500), default="")
+    # Engagement metrics — fill what's available, leave 0 otherwise
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    reads: Mapped[int] = mapped_column(Integer, default=0)
+    comments: Mapped[int] = mapped_column(Integer, default=0)
+    # Optional sentiment label assigned during ingest: positive / neutral / negative
+    sentiment: Mapped[str] = mapped_column(String(20), default="")
+    # Free-form tags ["招生", "口碑", "组氛围", "push", "放养", ...]
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    advisor: Mapped["Advisor"] = relationship()
+
+
 class AnnualPoem(Base):
     """Xiaohongshu-style annual poem: LLM-generated poetic year-in-review."""
     __tablename__ = "annual_poems"

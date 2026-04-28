@@ -5,8 +5,10 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime
+
 from app.database import async_session, get_db
-from app.models import AdvisorSchool, AdvisorCollege, Advisor
+from app.models import AdvisorSchool, AdvisorCollege, Advisor, AdvisorMention
 from app.services import advisor_crawler_service
 
 router = APIRouter()
@@ -55,6 +57,46 @@ class AdvisorBrief(BaseModel):
     photo_url: str
     h_index: int
     citation_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class MentionIn(BaseModel):
+    """Single mention payload. Either advisor_id, OR (advisor_name + school_name)
+    for fuzzy lookup during bulk import."""
+    advisor_id: int | None = None
+    advisor_name: str | None = None
+    school_name: str | None = None
+    source: str
+    source_account: str = ""
+    title: str = ""
+    url: str = ""
+    snippet: str = ""
+    cover_url: str = ""
+    likes: int = 0
+    reads: int = 0
+    comments: int = 0
+    sentiment: str = ""
+    tags: list[str] | None = None
+    published_at: str | None = None  # ISO 8601
+
+
+class MentionOut(BaseModel):
+    id: int
+    advisor_id: int
+    source: str
+    source_account: str
+    title: str
+    url: str
+    snippet: str
+    cover_url: str
+    likes: int
+    reads: int
+    comments: int
+    sentiment: str
+    tags: list[str] | None
+    published_at: str | None
+    created_at: str
 
     model_config = {"from_attributes": True}
 
@@ -247,3 +289,121 @@ async def list_advisors_in_college(college_id: int, db: AsyncSession = Depends(g
         )
         for a in advisors
     ]
+
+
+# ─────── Mentions (公众号 / 小红书 / 等舆情) ───────
+
+def _resolve_advisor_id(db: AsyncSession, payload: MentionIn) -> int | None:
+    """Sync helper for body-level lookup. Returns None on miss."""
+    return None  # placeholder — actual logic below uses db.execute
+
+
+async def _find_advisor(
+    db: AsyncSession, advisor_id: int | None, name: str | None, school_name: str | None
+) -> Advisor | None:
+    if advisor_id:
+        return await db.get(Advisor, advisor_id)
+    if not name:
+        return None
+    stmt = select(Advisor).where(Advisor.name == name)
+    if school_name:
+        stmt = stmt.join(AdvisorSchool, AdvisorSchool.id == Advisor.school_id).where(
+            AdvisorSchool.name == school_name
+        )
+    rows = (await db.execute(stmt)).scalars().all()
+    if len(rows) == 1:
+        return rows[0]
+    # On ambiguity (multiple Zhang Wei across schools), require school_name
+    return None
+
+
+def _serialize_mention(m: AdvisorMention) -> MentionOut:
+    return MentionOut(
+        id=m.id, advisor_id=m.advisor_id, source=m.source,
+        source_account=m.source_account, title=m.title, url=m.url,
+        snippet=m.snippet, cover_url=m.cover_url,
+        likes=m.likes, reads=m.reads, comments=m.comments,
+        sentiment=m.sentiment, tags=m.tags,
+        published_at=m.published_at.isoformat() if m.published_at else None,
+        created_at=m.created_at.isoformat(),
+    )
+
+
+@router.get("/advisor/advisors/{advisor_id}/mentions", response_model=list[MentionOut])
+async def list_advisor_mentions(advisor_id: int, db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        select(AdvisorMention)
+        .where(AdvisorMention.advisor_id == advisor_id)
+        .order_by(AdvisorMention.published_at.desc().nulls_last(), AdvisorMention.id.desc())
+    )).scalars().all()
+    return [_serialize_mention(m) for m in rows]
+
+
+@router.post("/advisor/mentions", response_model=MentionOut)
+async def add_mention(payload: MentionIn, db: AsyncSession = Depends(get_db)):
+    advisor = await _find_advisor(db, payload.advisor_id, payload.advisor_name, payload.school_name)
+    if not advisor:
+        raise HTTPException(404, "Advisor not found (provide advisor_id or unambiguous advisor_name+school_name)")
+    pub = None
+    if payload.published_at:
+        try:
+            pub = datetime.fromisoformat(payload.published_at.replace("Z", "+00:00"))
+        except ValueError:
+            pub = None
+    mention = AdvisorMention(
+        advisor_id=advisor.id,
+        source=payload.source[:30],
+        source_account=payload.source_account[:120],
+        title=payload.title,
+        url=payload.url[:500],
+        snippet=payload.snippet,
+        cover_url=payload.cover_url[:500],
+        likes=payload.likes, reads=payload.reads, comments=payload.comments,
+        sentiment=payload.sentiment[:20],
+        tags=payload.tags,
+        published_at=pub,
+    )
+    db.add(mention)
+    await db.commit()
+    await db.refresh(mention)
+    return _serialize_mention(mention)
+
+
+class BulkMentionsResult(BaseModel):
+    inserted: int
+    skipped_no_advisor: int
+    examples_skipped: list[str]
+
+
+@router.post("/advisor/mentions/bulk", response_model=BulkMentionsResult)
+async def bulk_add_mentions(payload: list[MentionIn], db: AsyncSession = Depends(get_db)):
+    inserted = 0
+    skipped: list[str] = []
+    for p in payload:
+        advisor = await _find_advisor(db, p.advisor_id, p.advisor_name, p.school_name)
+        if not advisor:
+            if len(skipped) < 5:
+                skipped.append(f"{p.advisor_name}@{p.school_name}")
+            continue
+        pub = None
+        if p.published_at:
+            try:
+                pub = datetime.fromisoformat(p.published_at.replace("Z", "+00:00"))
+            except ValueError:
+                pub = None
+        db.add(AdvisorMention(
+            advisor_id=advisor.id,
+            source=p.source[:30], source_account=p.source_account[:120],
+            title=p.title, url=p.url[:500], snippet=p.snippet,
+            cover_url=p.cover_url[:500],
+            likes=p.likes, reads=p.reads, comments=p.comments,
+            sentiment=p.sentiment[:20], tags=p.tags,
+            published_at=pub,
+        ))
+        inserted += 1
+    await db.commit()
+    return BulkMentionsResult(
+        inserted=inserted,
+        skipped_no_advisor=len(payload) - inserted,
+        examples_skipped=skipped,
+    )

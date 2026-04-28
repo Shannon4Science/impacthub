@@ -468,6 +468,24 @@ export interface AdvisorBrief {
   citation_count: number;
 }
 
+export interface AdvisorMention {
+  id: number;
+  advisor_id: number;
+  source: "wechat" | "xiaohongshu" | "zhihu" | "forum" | "other" | string;
+  source_account: string;
+  title: string;
+  url: string;
+  snippet: string;
+  cover_url: string;
+  likes: number;
+  reads: number;
+  comments: number;
+  sentiment: "positive" | "neutral" | "negative" | "" | string;
+  tags: string[] | null;
+  published_at: string | null;
+  created_at: string;
+}
+
 export interface AdvisorSchoolDetail {
   school: AdvisorSchoolBrief;
   colleges_crawled_at: string | null;
@@ -791,6 +809,9 @@ export const api = {
   },
   listAdvisorsInCollege(collegeId: number) {
     return request<AdvisorBrief[]>(`/advisor/colleges/${collegeId}/advisors`);
+  },
+  listAdvisorMentions(advisorId: number) {
+    return request<AdvisorMention[]>(`/advisor/advisors/${advisorId}/mentions`);
   },
   recruitSearch(jd: string, topK = 10) {
     return request<RecruitSearchResponse>("/recruit/search", {
