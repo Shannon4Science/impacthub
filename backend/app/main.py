@@ -13,7 +13,6 @@ from fastapi.responses import FileResponse, Response
 
 from app.database import init_db
 from app.routers import profile, data, milestones, citations, growth, reports, buzz, ai_summary, stats, trajectory, persona, rankings, career, annual_poem, capability, recruit, advisor
-from app.tasks.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -24,8 +23,9 @@ BACKEND_STATIC = Path(__file__).resolve().parent.parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Periodic data refresh is now in pipeline/crawl/refresh_all.py + cron;
+    # see ops/advance.sh and pipeline/README.md.
     await init_db()
-    start_scheduler()
     yield
 
 

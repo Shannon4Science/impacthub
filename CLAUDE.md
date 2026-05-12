@@ -39,7 +39,7 @@ python serve.py 19487   # serves frontend dist/ + proxies /api to backend
 
 **Frontend** (`frontend/src/`): React 18 + TypeScript + Tailwind CSS 4 + Recharts. Four pages: SetupPage (onboarding), ProfilePage (main dashboard), MilestonePage, UsersPage. API client in `lib/api.ts`.
 
-**Scheduler** (`tasks/scheduler.py`): APScheduler runs `refresh_all_users()` every 6 hours in-process.
+**Scheduler**: cron triggers `pipeline/crawl/refresh_all.py` every 6h to refresh User portfolios (papers / DBLP / CCF / GitHub / HF / snapshots). The 10-min watchdog at `pipeline/ops/advance.sh` relaunches stalled crawl/analyze jobs. See `pipeline/README.md`.
 
 **Database**: SQLite at `backend/data/impacthub.db`. Created automatically on first run. Migrations handled inline in `database.py`.
 

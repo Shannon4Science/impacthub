@@ -1,13 +1,14 @@
 """Serve frontend dist/ and proxy /api to backend."""
 import http.server
-import urllib.request
 import os
+
+import httpx
 
 BACKEND = "http://127.0.0.1:8001"
 DIST = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 
-# Force urllib NOT to pick up corporate http_proxy env vars when proxying to localhost
-_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# httpx with no env-derived proxies so we always hit the local backend directly
+_HTTPX = httpx.Client(trust_env=False, timeout=httpx.Timeout(connect=5, read=600, write=60, pool=60))
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -31,20 +32,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         url = BACKEND + self.path
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else None
-        req = urllib.request.Request(
-            url, data=body, method=self.command,
-            headers={"Content-Type": self.headers.get("Content-Type", "application/json")},
-        )
         try:
-            with _PROXY_OPENER.open(req) as resp:
-                self.send_response(resp.status)
-                # Pass through content type + cache headers so images render correctly
-                for h in ("Content-Type", "Content-Length", "Cache-Control", "ETag"):
-                    v = resp.headers.get(h)
-                    if v:
-                        self.send_header(h, v)
-                self.end_headers()
-                self.wfile.write(resp.read())
+            with _HTTPX.stream(
+                self.command, url, content=body,
+                headers={"Content-Type": self.headers.get("Content-Type", "application/json")},
+            ) as resp:
+                self.send_response(resp.status_code)
+                content_type = resp.headers.get("content-type", "")
+                is_stream = "text/event-stream" in content_type
+                self.send_header("Content-Type", content_type or "application/octet-stream")
+                if is_stream:
+                    self.send_header("Cache-Control", "no-cache, no-transform")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    # iter_raw() with no chunk_size yields whatever bytes the
+                    # wire delivers — needed so first "thinking" event isn't
+                    # buffered while waiting for chunk to fill
+                    for chunk in resp.iter_raw():
+                        if not chunk:
+                            continue
+                        try:
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            break
+                else:
+                    for h in ("Content-Length", "Cache-Control", "ETag"):
+                        v = resp.headers.get(h)
+                        if v:
+                            self.send_header(h, v)
+                    self.end_headers()
+                    self.wfile.write(resp.read())
         except Exception as e:
             self.send_response(502)
             self.end_headers()
@@ -54,6 +73,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     import sys
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 19487
-    server = http.server.HTTPServer(("0.0.0.0", port), Handler)
-    print(f"Serving on http://0.0.0.0:{port}")
+    # ThreadingHTTPServer so a long-running /api/advisor/chat request doesn't
+    # block static-asset / parallel-API requests.
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    server.daemon_threads = True
+    print(f"Serving on http://0.0.0.0:{port} (threaded)")
     server.serve_forever()

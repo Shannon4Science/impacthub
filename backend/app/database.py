@@ -70,6 +70,15 @@ async def init_db():
             await conn.execute(text("ALTER TABLE capability_profiles ADD COLUMN profiles_json JSON DEFAULT '[]'"))
         except Exception:
             pass
+        # advisor_mentions: pending fields for unlinked-then-reconciled flow
+        try:
+            await conn.execute(text("ALTER TABLE advisor_mentions ADD COLUMN pending_advisor_name VARCHAR(80) DEFAULT ''"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE advisor_mentions ADD COLUMN pending_school_name VARCHAR(120) DEFAULT ''"))
+        except Exception:
+            pass
 
 
 async def get_db():

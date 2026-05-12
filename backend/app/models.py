@@ -376,7 +376,12 @@ class AdvisorMention(Base):
     __tablename__ = "advisor_mentions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    advisor_id: Mapped[int] = mapped_column(ForeignKey("advisors.id"))
+    # advisor_id = 0 means unlinked (advisor not yet in DB).
+    # Once the advisor is crawled, a reconcile pass updates this column.
+    advisor_id: Mapped[int] = mapped_column(ForeignKey("advisors.id"), default=0)
+    # If unlinked, store the raw name + school so we can reconcile later
+    pending_advisor_name: Mapped[str] = mapped_column(String(80), default="")
+    pending_school_name: Mapped[str] = mapped_column(String(120), default="")
     source: Mapped[str] = mapped_column(String(30))            # wechat / xiaohongshu / zhihu / forum / other
     source_account: Mapped[str] = mapped_column(String(120), default="")  # 公众号名 / 小红书账号
     title: Mapped[str] = mapped_column(Text, default="")

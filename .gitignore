@@ -4,11 +4,10 @@
 .env.*.local
 !.env.example
 
-# Database
-*.db
+# Database — keep impacthub.db committed (organisation-internal snapshot),
+# but never track the SQLite WAL/SHM sidecar files (they change every second).
 *.db-shm
 *.db-wal
-data/
 
 # Python
 __pycache__/
@@ -43,5 +42,8 @@ Thumbs.db
 .claude/
 
 # Honor enrichment local config & outputs (config holds API key)
-backend/scripts/honor_enrich/config.yaml
-backend/scripts/honor_enrich/output/
+pipeline/data/honor_enrich/config.yaml
+pipeline/data/honor_enrich/output/
+
+# WeChat MP login cookie (sensitive — re-extract via DevTools when expired)
+pipeline/crawl/mentions_collect/.mp_cookie.json

@@ -3,15 +3,35 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   GraduationCap, Search, MapPin, Building2, Users, Loader2,
-  ExternalLink, ChevronRight, Award, ArrowLeft, RefreshCw, Sparkles,
+  ExternalLink, ChevronRight, ChevronDown, Award, ArrowLeft, RefreshCw, Sparkles,
+  UserCircle2, Mail, BookOpen,
 } from "lucide-react";
 import {
   api,
-  type AdvisorSchoolBrief, type AdvisorDirectoryStats,
+  type AdvisorSchoolBrief,
   type AdvisorSchoolDetail,
+  type AdvisorBrief,
 } from "@/lib/api";
 
 // ──────────────── Index page ────────────────
+
+// Provisional scope: 清北华五 + CS/AI only. Backend still has everything;
+// this filters what the frontend surfaces until we expand coverage.
+const ELITE_SCHOOLS: Array<{ name: string; short: string }> = [
+  { name: "清华大学", short: "清华" },
+  { name: "北京大学", short: "北大" },
+  { name: "复旦大学", short: "复旦" },
+  { name: "上海交通大学", short: "上交" },
+  { name: "中国科学技术大学", short: "中科大" },
+  { name: "浙江大学", short: "浙大" },
+  { name: "南京大学", short: "南大" },
+];
+const ELITE_NAME_SET = new Set<string>(ELITE_SCHOOLS.map((s) => s.name));
+const ELITE_SHORT_SET = new Set<string>(ELITE_SCHOOLS.map((s) => s.short));
+const isEliteSchool = (s: { name?: string; short_name?: string }) =>
+  ELITE_NAME_SET.has((s.name || "").trim()) || ELITE_SHORT_SET.has((s.short_name || "").trim());
+const CS_AI_KEYWORDS = ["计算机", "人工智能", "软件", "信息", "AI", "智能", "数据", "网络空间"];
+const isCsAiCollege = (name: string) => CS_AI_KEYWORDS.some((k) => name.includes(k));
 
 export default function AdvisorPage() {
   const { schoolId } = useParams<{ schoolId?: string }>();
@@ -43,17 +63,12 @@ const SCHOOL_TYPE_COLORS: Record<string, string> = {
 };
 
 function SchoolDirectory() {
-  const [stats, setStats] = useState<AdvisorDirectoryStats | null>(null);
   const [schools, setSchools] = useState<AdvisorSchoolBrief[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [province, setProvince] = useState("");
   const [tier, setTier] = useState<"" | "985" | "211">("");
   const [schoolType, setSchoolType] = useState("");
-
-  useEffect(() => {
-    api.getAdvisorStats().then(setStats).catch(() => {});
-  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -63,19 +78,28 @@ function SchoolDirectory() {
       tier: tier || undefined,
       school_type: schoolType || undefined,
     })
-      .then(setSchools)
+      .then((all) => {
+        const filtered = all.filter(isEliteSchool);
+        if (filtered.length === 0 && all.length > 0) {
+          console.warn("[advisor] elite filter matched 0; sample names:", all.slice(0, 5).map((s) => `${s.name}|${s.short_name}`));
+        }
+        setSchools(filtered);
+      })
       .catch(() => setSchools([]))
       .finally(() => setLoading(false));
   }, [q, province, tier, schoolType]);
 
-  const provinces = useMemo(
-    () => stats ? Object.entries(stats.by_province).sort((a, b) => b[1] - a[1]) : [],
-    [stats]
-  );
-  const schoolTypes = useMemo(
-    () => stats ? Object.entries(stats.by_school_type).sort((a, b) => b[1] - a[1]) : [],
-    [stats]
-  );
+  // Derive filter options from the elite-scoped school list, not the full-DB stats.
+  const provinces = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of schools) if (s.province) m.set(s.province, (m.get(s.province) || 0) + 1);
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [schools]);
+  const schoolTypes = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of schools) if (s.school_type) m.set(s.school_type, (m.get(s.school_type) || 0) + 1);
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [schools]);
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6">
@@ -94,17 +118,14 @@ function SchoolDirectory() {
             <div>
               <h1 className="text-xl font-bold text-gray-900">保研导师库</h1>
               <p className="text-xs text-gray-500">
-                覆盖中国 <strong>双一流（含全部 211/985）</strong> 高校 — 数据来源：教育部双一流名单
+                当前范围：<strong>清北华五 7 所</strong> 高校 · 仅 <strong>计算机 / 人工智能</strong> 方向
               </p>
             </div>
           </div>
-          {stats && (
-            <div className="hidden md:flex items-center gap-4 text-xs text-gray-600">
-              <Stat label="高校" value={stats.total_schools} />
-              <Stat label="学院" value={stats.total_colleges} />
-              <Stat label="导师" value={stats.total_advisors} highlight />
-            </div>
-          )}
+          <div className="hidden md:flex items-center gap-4 text-xs text-gray-600">
+            <Stat label="高校" value={ELITE_SCHOOLS.length} />
+            <Stat label="已加载" value={schools.length} highlight />
+          </div>
         </div>
       </motion.div>
 
@@ -288,6 +309,22 @@ function SchoolDetail({ schoolId }: { schoolId: number }) {
   }
 
   const s = data.school;
+  if (!isEliteSchool(s)) {
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-12 text-center text-sm text-gray-500">
+        <p className="mb-2">{s.name} 暂不在当前展示范围内</p>
+        <p className="text-xs text-gray-400">当前仅开放清北华五 7 所高校的 CS/AI 导师</p>
+        <button
+          onClick={() => navigate("/advisor")}
+          className="mt-4 inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+        >
+          <ArrowLeft className="h-3 w-3" />
+          返回
+        </button>
+      </main>
+    );
+  }
+  const csaiColleges = data.colleges.filter((c) => isCsAiCollege(c.name));
   const tierColor = s.is_985 ? TIER_COLORS["985"] : s.is_211 ? TIER_COLORS["211"] : TIER_COLORS["双一流"];
 
   return (
@@ -356,7 +393,7 @@ function SchoolDetail({ schoolId }: { schoolId: number }) {
         </div>
 
         <div className="mt-5 grid grid-cols-3 gap-3">
-          <Stat label="学院数" value={data.colleges.length} />
+          <Stat label="CS/AI 学院" value={csaiColleges.length} />
           <Stat label="已收录导师" value={s.advisor_count} highlight />
           <Stat label="爬取状态" value={data.colleges_crawled_at ? "已完成" : "未抓取"} />
         </div>
@@ -365,7 +402,9 @@ function SchoolDetail({ schoolId }: { schoolId: number }) {
       {/* Colleges */}
       <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-900">学院列表</h2>
+          <h2 className="text-sm font-semibold text-gray-900">
+            CS / AI 学院 <span className="ml-1 text-xs font-normal text-gray-400">仅显示计算机 / 人工智能方向</span>
+          </h2>
           {!data.colleges.length && (
             <span className="text-xs text-gray-400">尚未抓取学院数据</span>
           )}
@@ -377,38 +416,172 @@ function SchoolDetail({ schoolId }: { schoolId: number }) {
             <p>该校学院列表尚未抓取</p>
             <p className="mt-1 text-[11px] text-gray-300">点击右上角"抓取学院"按钮启动 — 通常 30 秒内完成</p>
           </div>
+        ) : csaiColleges.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center text-sm text-gray-400">
+            该校已抓取 {data.colleges.length} 个学院，但无匹配 CS/AI 关键词的学院
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {data.colleges.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm hover:border-indigo-300"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium text-gray-900 truncate">{c.name}</div>
-                  <div className="mt-0.5 flex items-center gap-2 text-[11px] text-gray-500">
-                    {c.discipline_category && <span>{c.discipline_category}</span>}
-                    {c.advisor_count > 0 && (
-                      <span className="text-indigo-600">{c.advisor_count} 导师</span>
-                    )}
-                  </div>
-                </div>
-                {c.homepage_url && (
-                  <a
-                    href={c.homepage_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-gray-400 hover:text-indigo-500"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                )}
-              </div>
+          <div className="space-y-2">
+            {csaiColleges.map((c) => (
+              <CollegeBlock key={c.id} college={c} />
             ))}
           </div>
         )}
       </div>
     </main>
+  );
+}
+
+// ──────────────── College block with lazy advisor expansion ────────────────
+
+function CollegeBlock({ college }: { college: { id: number; name: string; discipline_category: string; homepage_url: string; advisor_count: number } }) {
+  const [open, setOpen] = useState(false);
+  const [advisors, setAdvisors] = useState<AdvisorBrief[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const toggle = async () => {
+    const next = !open;
+    setOpen(next);
+    if (next && advisors === null) {
+      setLoading(true);
+      try {
+        const rows = await api.listAdvisorsInCollege(college.id);
+        setAdvisors(rows);
+      } catch {
+        setAdvisors([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <button
+        onClick={toggle}
+        className="flex w-full items-center justify-between px-3 py-2.5 text-left text-sm hover:bg-gray-50"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            {open ? <ChevronDown className="h-4 w-4 text-gray-400" /> : <ChevronRight className="h-4 w-4 text-gray-400" />}
+            <span className="font-medium text-gray-900">{college.name}</span>
+          </div>
+          <div className="mt-0.5 ml-5 flex items-center gap-2 text-[11px] text-gray-500">
+            {college.discipline_category && <span>{college.discipline_category}</span>}
+            {college.advisor_count > 0 && (
+              <span className="text-indigo-600">{college.advisor_count} 导师</span>
+            )}
+          </div>
+        </div>
+        {college.homepage_url && (
+          <a
+            href={college.homepage_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-gray-400 hover:text-indigo-500"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 bg-gray-50/50 p-3">
+          {loading ? (
+            <div className="py-6 text-center text-xs text-gray-400">
+              <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+            </div>
+          ) : !advisors || advisors.length === 0 ? (
+            <div className="py-4 text-center text-xs text-gray-400">尚无导师数据</div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              {advisors.map((a) => (
+                <AdvisorCard key={a.id} advisor={a} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdvisorCard({ advisor }: { advisor: AdvisorBrief }) {
+  const linked = advisor.impacthub_user_id != null && advisor.impacthub_user_id !== 0;
+  return (
+    <div className="flex gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm shadow-sm">
+      {/* Avatar */}
+      <div className="shrink-0">
+        {advisor.photo_url ? (
+          <img
+            src={advisor.photo_url}
+            alt={advisor.name}
+            className="h-12 w-12 rounded-full object-cover ring-1 ring-gray-200"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        ) : (
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-indigo-100 to-purple-100 text-indigo-500">
+            <UserCircle2 className="h-7 w-7" />
+          </div>
+        )}
+      </div>
+
+      {/* Main */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate font-semibold text-gray-900">{advisor.name}</span>
+          {advisor.title && (
+            <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">{advisor.title}</span>
+          )}
+        </div>
+        {advisor.research_areas && advisor.research_areas.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {advisor.research_areas.slice(0, 4).map((r) => (
+              <span key={r} className="rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] text-indigo-700">{r}</span>
+            ))}
+          </div>
+        )}
+        {advisor.bio && (
+          <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-gray-500">{advisor.bio}</p>
+        )}
+        <div className="mt-2 flex items-center gap-3 text-[11px]">
+          {linked ? (
+            <Link
+              to={`/profile/${advisor.impacthub_user_id}`}
+              className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2 py-1 font-medium text-white hover:bg-indigo-700"
+            >
+              <BookOpen className="h-3 w-3" />
+              学术档案
+            </Link>
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-gray-400" title="尚未匹配到 Semantic Scholar 档案">
+              <BookOpen className="h-3 w-3" />
+              档案待匹配
+            </span>
+          )}
+          {advisor.homepage_url && (
+            <a
+              href={advisor.homepage_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-gray-500 hover:text-indigo-600"
+            >
+              <ExternalLink className="h-3 w-3" />
+              个人主页
+            </a>
+          )}
+          {advisor.email && (
+            <a
+              href={`mailto:${advisor.email}`}
+              className="inline-flex items-center gap-1 text-gray-500 hover:text-indigo-600"
+            >
+              <Mail className="h-3 w-3" />
+              邮件
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

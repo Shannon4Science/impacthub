@@ -466,6 +466,9 @@ export interface AdvisorBrief {
   photo_url: string;
   h_index: number;
   citation_count: number;
+  bio?: string;
+  email?: string;
+  impacthub_user_id?: number | null;
 }
 
 export interface AdvisorMention {
@@ -484,6 +487,134 @@ export interface AdvisorMention {
   tags: string[] | null;
   published_at: string | null;
   created_at: string;
+}
+
+export interface AdvisorChatCriteria {
+  direction_keywords: string[];
+  school_tier: "985" | "211" | "double_first_class" | "any";
+  provinces: string[];
+  school_types: string[];
+  must_have_mention: boolean;
+  preferred_traits: string[];
+}
+
+/** Unified advisor card data — same shape rendered for both
+ *  lookup_advisor (full profile) and search_advisors (list item). */
+export interface AdvisorChatRecommendation {
+  advisor_id: number;
+  name: string;
+  title?: string;
+  school: string;
+  school_short: string;
+  is_985: boolean;
+  is_211: boolean;
+  province: string;
+  college: string;
+  discipline?: string;
+  homepage?: string;
+  homepage_url?: string;
+  email?: string;
+  office?: string;
+  bio?: string;
+  recruiting_intent?: string;
+  is_doctoral_supervisor?: boolean;
+  crawl_status?: string;
+  h_index: number;
+  research_areas?: string[];
+  honors?: string[];
+  education?: { degree: string; year: number | null; institution: string; advisor: string }[];
+  // Mention data: full list if available (lookup), else just count (search)
+  mentions?: {
+    title?: string;
+    url?: string;
+    snippet?: string;
+    cover_url?: string;
+    source: string;
+    source_account?: string;
+    account?: string;
+    tags?: string[] | null;
+    sentiment?: string;
+    published_at?: string | null;
+  }[];
+  n_mentions?: number;
+  // Optional rerank fields
+  match_score?: number;
+  tier?: "perfect" | "strong" | "potential";
+  reasoning?: string;
+  highlights?: string[];
+  concerns?: string[];
+}
+
+export type AdvisorChatStreamEvent =
+  | { type: "thinking" }
+  | { type: "tool_start"; name: string; args: Record<string, unknown> }
+  | {
+      type: "tool_end";
+      name: string;
+      summary: string;
+      new_advisors_count?: number;
+      advisor_profile?: AdvisorChatProfile;
+    }
+  | { type: "delta"; content: string }
+  | {
+      type: "done";
+      recommendations: AdvisorChatRecommendation[];
+      advisor_profiles: AdvisorChatProfile[];
+      tool_trace?: { name: string; args: Record<string, unknown>; result_summary: string }[];
+      error?: string;
+    };
+
+export interface AdvisorChatResponse {
+  reply: string;
+  criteria?: AdvisorChatCriteria | null;
+  recommendations: AdvisorChatRecommendation[];
+  advisor_profiles?: AdvisorChatProfile[];
+  tool_trace?: { name: string; args: Record<string, unknown>; result_summary: string }[];
+  ready?: boolean;
+}
+
+// Same shape as AdvisorChatRecommendation — unified
+export type AdvisorChatProfile = AdvisorChatRecommendation;
+
+export interface MentionFeedItem {
+  id: number;
+  source: string;
+  source_account: string;
+  title: string;
+  url: string;
+  snippet: string;
+  cover_url: string;
+  likes: number;
+  reads: number;
+  comments: number;
+  sentiment: string;
+  tags: string[] | null;
+  published_at: string | null;
+  advisor_id: number;
+  advisor_name: string;
+  advisor_title: string;
+  advisor_homepage: string;
+  college_id: number;
+  college_name: string;
+  school_id: number;
+  school_name: string;
+  school_short: string;
+  school_province: string;
+  is_985: boolean;
+  is_211: boolean;
+  is_linked: boolean;
+}
+
+export interface MentionFeedResponse {
+  items: MentionFeedItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  facets: {
+    sources: Record<string, number>;
+    accounts: Record<string, number>;
+    sentiments: Record<string, number>;
+  };
 }
 
 export interface AdvisorSchoolDetail {
@@ -812,6 +943,67 @@ export const api = {
   },
   listAdvisorMentions(advisorId: number) {
     return request<AdvisorMention[]>(`/advisor/advisors/${advisorId}/mentions`);
+  },
+  advisorChat(messages: { role: "user" | "assistant"; content: string }[]) {
+    return request<AdvisorChatResponse>(`/advisor/chat`, {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+    });
+  },
+  /** Streaming chat. Returns an async iterator of SSE events.
+   * Caller can consume events incrementally:
+   *   for await (const ev of api.advisorChatStream(msgs)) { ... } */
+  async *advisorChatStream(
+    messages: { role: "user" | "assistant"; content: string }[],
+    signal?: AbortSignal,
+  ): AsyncGenerator<AdvisorChatStreamEvent> {
+    const res = await fetch(`${BASE}/advisor/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+      signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // SSE messages are separated by \n\n; each starts with "data: "
+      let sep: number;
+      while ((sep = buf.indexOf("\n\n")) >= 0) {
+        const raw = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        for (const line of raw.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload) continue;
+          try {
+            yield JSON.parse(payload) as AdvisorChatStreamEvent;
+          } catch {
+            // skip malformed
+          }
+        }
+      }
+    }
+  },
+  mentionsFeed(params: {
+    q?: string;
+    source?: string;
+    account?: string;
+    sentiment?: string;
+    school_id?: number;
+    advisor_id?: number;
+    offset?: number;
+    limit?: number;
+  } = {}) {
+    const sp = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));
+    });
+    return request<MentionFeedResponse>(`/advisor/mentions/feed?${sp.toString()}`);
   },
   recruitSearch(jd: string, topK = 10) {
     return request<RecruitSearchResponse>("/recruit/search", {

@@ -52,7 +52,7 @@ def _make_permissive_ssl_context() -> ssl.SSLContext:
 _PERMISSIVE_SSL = _make_permissive_ssl_context()
 
 from app.config import LLM_API_BASE, LLM_API_KEY, LLM_FALLBACK_MODEL
-from app.models import AdvisorSchool, AdvisorCollege, Advisor
+from app.models import AdvisorSchool, AdvisorCollege, Advisor, AdvisorMention
 
 logger = logging.getLogger(__name__)
 
@@ -672,16 +672,19 @@ def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
         if text in seen_names:
             continue
         href = urljoin(base_url, href_raw)
-        # Real teacher detail pages typically have a numeric ID in the path
-        # (info/1111/3490.htm, people/123, faculty?id=56, etc.)
-        # Pure nav links (e.g. /szzk/jcrc.htm) don't have such digits
+        # Real teacher detail pages match either:
+        #   (a) numeric ID in path (info/1111/3490.htm, people/123)
+        #   (b) keyword path with pinyin slug (facultydetails/xxx, teacher/<name>, personal/...)
         href_path = urlparse(href).path
-        # Must contain a digit run of 2+ in the URL path (matches /1111/3490.htm,
-        # /info/123, etc. but skips /szzk/jcrc.htm)
-        if not re.search(r"\d{2,}", href_path):
-            continue
         href_low = href.lower()
-        if not any(p in href_low for p in (".htm", ".html", ".aspx", "info", "people", "teacher", "faculty", "personal", "show", "view")):
+        has_digit = bool(re.search(r"\d{2,}", href_path))
+        has_keyword = any(p in href_low for p in (
+            "facultydetail", "teacherdetail", "facultyinfo", "personal",
+            "teacher/", "faculty/", "people/", "prof/", "/szjs/",
+        ))
+        # Generic file-extension fallback (when paired with digits)
+        has_doc_ext = href_low.endswith((".htm", ".html", ".aspx", ".jsp"))
+        if not (has_keyword or (has_digit and has_doc_ext)):
             continue
         seen_names.add(text)
         candidates.append({
@@ -1010,6 +1013,7 @@ async def _crawl_one_college_advisors(
     existing_names = {a.name for a in existing}
 
     added = 0
+    new_advisor_names: list[str] = []
     for a in advisors:
         if a["name"] in existing_names:
             continue
@@ -1024,10 +1028,231 @@ async def _crawl_one_college_advisors(
             crawled_at=datetime.utcnow(),
         ))
         added += 1
+        new_advisor_names.append(a["name"])
     college.advisor_count = (college.advisor_count or 0) + added
     college.advisors_crawled_at = datetime.utcnow()
     await db.flush()
+
+    # Reconcile: any unlinked mentions matching these new (school, name) → link up
+    if new_advisor_names:
+        await reconcile_unlinked_mentions(db, school, new_advisor_names)
+        await db.flush()
+
     return added
+
+
+async def reconcile_unlinked_mentions(
+    db: AsyncSession,
+    school: AdvisorSchool,
+    advisor_names: list[str] | None = None,
+) -> int:
+    """Link previously-stored unlinked mentions (advisor_id=0 with pending_*)
+    to actual Advisor rows whenever the advisor was newly inserted.
+
+    Matches by pending_school_name == school.name AND pending_advisor_name in
+    `advisor_names`. If `advisor_names` is None, attempts to reconcile all
+    unlinked mentions for this school.
+    """
+    stmt = select(AdvisorMention).where(
+        AdvisorMention.advisor_id == 0,
+        AdvisorMention.pending_school_name == school.name,
+    )
+    if advisor_names:
+        stmt = stmt.where(AdvisorMention.pending_advisor_name.in_(advisor_names))
+    pending_rows = (await db.execute(stmt)).scalars().all()
+    if not pending_rows:
+        return 0
+
+    # Look up the matching advisors in this school in one go
+    names_needed = {m.pending_advisor_name for m in pending_rows}
+    advisors = (await db.execute(
+        select(Advisor).where(
+            Advisor.school_id == school.id,
+            Advisor.name.in_(names_needed),
+        )
+    )).scalars().all()
+    by_name: dict[str, Advisor] = {a.name: a for a in advisors}
+
+    linked = 0
+    for m in pending_rows:
+        a = by_name.get(m.pending_advisor_name)
+        if not a:
+            continue
+        m.advisor_id = a.id
+        # Keep pending_* for audit; or wipe — choosing to keep
+        linked += 1
+    if linked:
+        logger.info("Reconciled %d unlinked mentions for %s", linked, school.name)
+    return linked
+
+
+# ──────────────────────────── Stage 5: per-advisor detail (Phase 3) ────────────────────────────
+
+ADVISOR_DETAIL_PROMPT = """你正在分析一位中国高校老师的个人主页 HTML。请抽取以下结构化字段并以 JSON 输出。
+
+### 老师
+{name}（{school_name} · {college_name}）— {url}
+
+### 主页文本（已剔除导航/脚本）
+{text}
+
+### 任务（仅基于上面的文本，不要瞎编）
+- title: 职称（教授 / 副教授 / 助理教授 / 研究员 / 副研究员 / 讲师 / 博士后 / 长聘 / 特聘 等）
+- is_doctoral_supervisor: true/false（是否博导）
+- is_master_supervisor: true/false（是否硕导）
+- email: 邮箱地址
+- office: 办公地点（如 "电院 3 号楼 305"）
+- phone: 电话
+- photo_url: 个人照片 URL（如 HTML 里有头像 <img>）
+- research_areas: ["视觉生成", "多模态学习", "扩散模型", ...]（具体方向，3-8 个，避免"AI/ML 这种太泛）
+- bio: 1-3 句话简介（**只复述主页里写的内容**，不要外推）
+- education: [{{"degree":"博士","year":2018,"institution":"清华大学","advisor":"张三"}}, ...]（教育背景）
+- honors: ["IEEE Fellow", "杰青", ...]（头衔/奖项；从主页明确写到的提取，不要猜）
+- recruiting_intent: 关于招生意愿/招生条件/招生方向的明确陈述（原文摘抄，不要总结）
+
+### 严格 JSON（只输出 JSON）
+{{
+  "title": "...",
+  "is_doctoral_supervisor": true,
+  "is_master_supervisor": true,
+  "email": "...",
+  "office": "...",
+  "phone": "...",
+  "photo_url": "https://...",
+  "research_areas": ["..."],
+  "bio": "...",
+  "education": [{{"degree":"...","year":2018,"institution":"...","advisor":"..."}}],
+  "honors": ["..."],
+  "recruiting_intent": "..."
+}}
+
+未知字段留空字符串/空数组。
+"""
+
+
+def _clean_advisor_page(html: str) -> str:
+    """Strip scripts/styles only, keep all visible content.
+
+    NOTE: 不能去 <header>/<nav>/<footer> — Chinese university faculty pages
+    often put real bio content INSIDE these semantic tags due to
+    non-standard markup (e.g. Tsinghua CS puts research/honors/email all
+    inside <header>). Stripping nav etc. removes 95% of the bio.
+    """
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "lxml")
+    # Only strip truly inert elements — forms/headers may contain real bio
+    # content on Chinese university CMS pages
+    for tag in soup(["script", "style", "noscript", "iframe"]):
+        tag.decompose()
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+    # Trim leading nav-like cruft (breadcrumb headers): everything up to "正文" if present
+    if "正文" in text[:1000]:
+        text = text[text.index("正文") + 2:]
+    # Cap length but generously for advisor bios
+    return text[:12000]
+
+
+def _extract_first_photo(html: str, base_url: str) -> str:
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "lxml")
+    for img in soup.find_all("img", src=True):
+        src = img["src"].strip()
+        if not src or src.startswith("data:"):
+            continue
+        absolute = urljoin(base_url, src)
+        # Heuristic: skip layout images (logo / banner / icon)
+        low = absolute.lower()
+        if any(b in low for b in ("logo", "banner", "icon", "header", "footer", "/ui/", "background")):
+            continue
+        return absolute
+    return ""
+
+
+def _extract_email_regex(text: str) -> str:
+    """Find first email-like string."""
+    if not text:
+        return ""
+    m = re.search(r"[A-Za-z0-9._%+-]+(?:\s*[@]\s*|\s*\[at\]\s*|\s*【at】\s*)[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
+    if m:
+        return re.sub(r"\s*(?:\[at\]|【at】)\s*", "@", m.group(0)).replace(" ", "")[:120]
+    return ""
+
+
+async def crawl_advisor_detail(
+    db: AsyncSession,
+    advisor: Advisor,
+) -> dict:
+    """Phase 3: enrich one advisor's record by parsing their homepage with LLM."""
+    if not advisor.homepage_url:
+        return {"ok": False, "error": "no homepage_url"}
+
+    school = await db.get(AdvisorSchool, advisor.school_id)
+    college = await db.get(AdvisorCollege, advisor.college_id)
+
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        html = await fetch_html(client, advisor.homepage_url)
+        if not html:
+            return {"ok": False, "error": "homepage fetch failed"}
+
+        text = _clean_advisor_page(html)
+        photo_fallback = _extract_first_photo(html, advisor.homepage_url)
+        email_regex = _extract_email_regex(text)
+
+        prompt = ADVISOR_DETAIL_PROMPT.format(
+            name=advisor.name,
+            school_name=school.name if school else "",
+            college_name=college.name if college else "",
+            url=advisor.homepage_url,
+            text=text,
+        )
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        result = await _call_llm(client, prompt, max_tokens=4000)
+
+    if not isinstance(result, dict):
+        return {"ok": False, "error": "LLM returned non-dict"}
+
+    def _str(key: str, max_len: int = 300) -> str:
+        return str(result.get(key) or "")[:max_len]
+
+    advisor.title = _str("title", 60) or advisor.title
+    advisor.is_doctoral_supervisor = bool(result.get("is_doctoral_supervisor"))
+    advisor.is_master_supervisor = bool(result.get("is_master_supervisor"))
+    advisor.email = _str("email", 120) or email_regex or advisor.email
+    advisor.office = _str("office", 200) or advisor.office
+    advisor.phone = _str("phone", 40) or advisor.phone
+    advisor.photo_url = _str("photo_url", 500) or photo_fallback or advisor.photo_url
+
+    areas = result.get("research_areas")
+    if isinstance(areas, list):
+        advisor.research_areas = [str(a)[:80] for a in areas if str(a).strip()][:10]
+
+    advisor.bio = _str("bio", 1500) or advisor.bio
+
+    edu = result.get("education")
+    if isinstance(edu, list):
+        cleaned = []
+        for e in edu[:8]:
+            if isinstance(e, dict):
+                cleaned.append({
+                    "degree": str(e.get("degree", ""))[:40],
+                    "year": e.get("year") if isinstance(e.get("year"), int) else None,
+                    "institution": str(e.get("institution", ""))[:120],
+                    "advisor": str(e.get("advisor", ""))[:80],
+                })
+        advisor.education = cleaned or None
+
+    honors = result.get("honors")
+    if isinstance(honors, list):
+        advisor.honors = [str(h)[:80] for h in honors if str(h).strip()][:8]
+
+    advisor.recruiting_intent = _str("recruiting_intent", 1500) or advisor.recruiting_intent
+    advisor.crawl_status = "detailed"
+    advisor.last_refreshed_at = datetime.utcnow()
+    await db.flush()
+    return {"ok": True, "advisor_id": advisor.id, "areas_n": len(advisor.research_areas or [])}
 
 
 async def crawl_college_advisors(db: AsyncSession, college: AdvisorCollege) -> dict:

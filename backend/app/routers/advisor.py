@@ -9,7 +9,7 @@ from datetime import datetime
 
 from app.database import async_session, get_db
 from app.models import AdvisorSchool, AdvisorCollege, Advisor, AdvisorMention
-from app.services import advisor_crawler_service
+from app.services import advisor_crawler_service, advisor_chat_service
 
 router = APIRouter()
 
@@ -57,6 +57,9 @@ class AdvisorBrief(BaseModel):
     photo_url: str
     h_index: int
     citation_count: int
+    bio: str = ""
+    email: str = ""
+    impacthub_user_id: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -286,6 +289,8 @@ async def list_advisors_in_college(college_id: int, db: AsyncSession = Depends(g
             research_areas=a.research_areas,
             homepage_url=a.homepage_url, photo_url=a.photo_url,
             h_index=a.h_index, citation_count=a.citation_count,
+            bio=a.bio, email=a.email,
+            impacthub_user_id=a.impacthub_user_id,
         )
         for a in advisors
     ]
@@ -339,6 +344,158 @@ async def list_advisor_mentions(advisor_id: int, db: AsyncSession = Depends(get_
     return [_serialize_mention(m) for m in rows]
 
 
+class MentionFeedItem(BaseModel):
+    """A mention with advisor/college/school context for the feed view.
+
+    For unlinked mentions (advisor not yet crawled), advisor_id=0 and the
+    advisor/school fields fall back to pending_* values; college fields are empty.
+    """
+    id: int
+    source: str
+    source_account: str
+    title: str
+    url: str
+    snippet: str
+    cover_url: str
+    likes: int
+    reads: int
+    comments: int
+    sentiment: str
+    tags: list[str] | None
+    published_at: str | None
+    # Always populated (linked → from joined advisor; unlinked → from pending_*)
+    advisor_id: int          # 0 if unlinked
+    advisor_name: str
+    advisor_title: str
+    advisor_homepage: str
+    college_id: int          # 0 if unlinked
+    college_name: str
+    school_id: int           # 0 if unlinked
+    school_name: str
+    school_short: str
+    school_province: str
+    is_985: bool
+    is_211: bool
+    is_linked: bool          # convenience for frontend
+
+
+class MentionFeedFacets(BaseModel):
+    sources: dict[str, int]
+    accounts: dict[str, int]
+    sentiments: dict[str, int]
+
+
+class MentionFeedResponse(BaseModel):
+    items: list[MentionFeedItem]
+    total: int
+    offset: int
+    limit: int
+    facets: MentionFeedFacets
+
+
+@router.get("/advisor/mentions/feed", response_model=MentionFeedResponse)
+async def mentions_feed(
+    q: str | None = Query(None, description="搜索 (匹配 title/snippet/advisor_name/account)"),
+    source: str | None = Query(None, description="wechat/xiaohongshu/zhihu/forum"),
+    account: str | None = Query(None),
+    sentiment: str | None = Query(None),
+    school_id: int | None = None,
+    advisor_id: int | None = None,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    M, A, C, S = AdvisorMention, Advisor, AdvisorCollege, AdvisorSchool
+    # LEFT-OUTER joins so unlinked mentions (advisor_id=0) are also returned;
+    # advisor/school fields then fall back to M.pending_* values.
+    base = (
+        select(M, A, C, S)
+        .outerjoin(A, A.id == M.advisor_id)
+        .outerjoin(C, C.id == A.college_id)
+        .outerjoin(S, S.id == A.school_id)
+    )
+
+    if source:
+        base = base.where(M.source == source)
+    if account:
+        base = base.where(M.source_account == account)
+    if sentiment:
+        base = base.where(M.sentiment == sentiment)
+    if school_id:
+        base = base.where(S.id == school_id)
+    if advisor_id:
+        base = base.where(M.advisor_id == advisor_id)
+    if q:
+        from sqlalchemy import or_
+        like = f"%{q}%"
+        base = base.where(or_(
+            M.title.like(like),
+            M.snippet.like(like),
+            M.source_account.like(like),
+            M.pending_advisor_name.like(like),
+            M.pending_school_name.like(like),
+            A.name.like(like),
+            S.name.like(like),
+            S.short_name.like(like),
+        ))
+
+    total_stmt = select(func.count()).select_from(base.subquery())
+    total = (await db.execute(total_stmt)).scalar() or 0
+
+    paginated = base.order_by(
+        M.published_at.desc().nulls_last(), M.id.desc()
+    ).offset(offset).limit(limit)
+    rows = (await db.execute(paginated)).all()
+
+    items = []
+    for m, a, c, s in rows:
+        is_linked = a is not None and m.advisor_id != 0
+        items.append(MentionFeedItem(
+            id=m.id, source=m.source, source_account=m.source_account,
+            title=m.title, url=m.url, snippet=m.snippet, cover_url=m.cover_url,
+            likes=m.likes, reads=m.reads, comments=m.comments,
+            sentiment=m.sentiment, tags=m.tags,
+            published_at=m.published_at.isoformat() if m.published_at else None,
+            advisor_id=a.id if is_linked else 0,
+            advisor_name=(a.name if is_linked else m.pending_advisor_name) or "",
+            advisor_title=(a.title if is_linked else "") or "",
+            advisor_homepage=(a.homepage_url if is_linked else "") or "",
+            college_id=c.id if (is_linked and c) else 0,
+            college_name=(c.name if (is_linked and c) else "") or "",
+            school_id=s.id if (is_linked and s) else 0,
+            school_name=(s.name if (is_linked and s) else m.pending_school_name) or "",
+            school_short=(s.short_name or s.name) if (is_linked and s) else (m.pending_school_name or ""),
+            school_province=(s.province if (is_linked and s) else "") or "",
+            is_985=bool(s.is_985) if (is_linked and s) else False,
+            is_211=bool(s.is_211) if (is_linked and s) else False,
+            is_linked=is_linked,
+        ))
+
+    # Facets across the *unfiltered* set so user can see what's available
+    src_rows = (await db.execute(
+        select(M.source, func.count(M.id)).group_by(M.source)
+    )).all()
+    acc_rows = (await db.execute(
+        select(M.source_account, func.count(M.id))
+        .where(M.source_account != "")
+        .group_by(M.source_account)
+    )).all()
+    sent_rows = (await db.execute(
+        select(M.sentiment, func.count(M.id))
+        .where(M.sentiment != "")
+        .group_by(M.sentiment)
+    )).all()
+
+    return MentionFeedResponse(
+        items=items, total=total, offset=offset, limit=limit,
+        facets=MentionFeedFacets(
+            sources={k: int(v) for k, v in src_rows if k},
+            accounts={k: int(v) for k, v in acc_rows if k},
+            sentiments={k: int(v) for k, v in sent_rows if k},
+        ),
+    )
+
+
 @router.post("/advisor/mentions", response_model=MentionOut)
 async def add_mention(payload: MentionIn, db: AsyncSession = Depends(get_db)):
     advisor = await _find_advisor(db, payload.advisor_id, payload.advisor_name, payload.school_name)
@@ -373,6 +530,113 @@ class BulkMentionsResult(BaseModel):
     inserted: int
     skipped_no_advisor: int
     examples_skipped: list[str]
+
+
+# ─────── Conversational recommendation ───────
+
+class ChatMessage(BaseModel):
+    role: str  # "user" | "assistant"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+
+
+@router.post("/advisor/chat")
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    if not req.messages:
+        raise HTTPException(400, "messages cannot be empty")
+    history = [{"role": m.role, "content": m.content} for m in req.messages]
+    return await advisor_chat_service.chat_turn(db, history)
+
+
+@router.post("/advisor/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """SSE streaming version: emits tool_start/tool_end + delta tokens + done."""
+    if not req.messages:
+        raise HTTPException(400, "messages cannot be empty")
+    history = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    from fastapi.responses import StreamingResponse
+    import json as _json
+
+    async def gen():
+        try:
+            async for ev in advisor_chat_service.chat_turn_stream(history):
+                yield f"data: {_json.dumps(ev, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            err = {"type": "done", "error": str(e), "recommendations": [], "advisor_profiles": []}
+            yield f"data: {_json.dumps(err, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+class PendingMentionItem(BaseModel):
+    id: int
+    pending_advisor_name: str
+    pending_school_name: str
+    source: str
+    source_account: str
+    title: str
+    url: str
+    snippet: str
+    sentiment: str
+    tags: list[str] | None
+    published_at: str | None
+
+
+class PendingMentionsResponse(BaseModel):
+    items: list[PendingMentionItem]
+    total: int
+    by_school: dict[str, int]
+
+
+@router.get("/advisor/mentions/pending", response_model=PendingMentionsResponse)
+async def list_pending_mentions(
+    school: str | None = Query(None, description="Filter by pending_school_name"),
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mentions that haven't been linked to a real Advisor row yet (advisor not
+    crawled). They'll auto-link the moment the matching advisor enters DB."""
+    stmt = select(AdvisorMention).where(AdvisorMention.advisor_id == 0)
+    if school:
+        stmt = stmt.where(AdvisorMention.pending_school_name == school)
+    rows = (await db.execute(
+        stmt.order_by(AdvisorMention.published_at.desc().nulls_last(), AdvisorMention.id.desc()).limit(limit)
+    )).scalars().all()
+    total = (await db.execute(
+        select(func.count(AdvisorMention.id)).where(AdvisorMention.advisor_id == 0)
+    )).scalar() or 0
+    by_school_rows = (await db.execute(
+        select(AdvisorMention.pending_school_name, func.count(AdvisorMention.id))
+        .where(AdvisorMention.advisor_id == 0)
+        .group_by(AdvisorMention.pending_school_name)
+    )).all()
+    return PendingMentionsResponse(
+        items=[
+            PendingMentionItem(
+                id=m.id,
+                pending_advisor_name=m.pending_advisor_name,
+                pending_school_name=m.pending_school_name,
+                source=m.source, source_account=m.source_account,
+                title=m.title, url=m.url, snippet=m.snippet,
+                sentiment=m.sentiment, tags=m.tags,
+                published_at=m.published_at.isoformat() if m.published_at else None,
+            )
+            for m in rows
+        ],
+        total=total,
+        by_school={k: int(v) for k, v in by_school_rows if k},
+    )
 
 
 @router.post("/advisor/mentions/bulk", response_model=BulkMentionsResult)

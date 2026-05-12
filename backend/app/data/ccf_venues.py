@@ -1,0 +1,902 @@
+"""CCF Recommended Conference & Journal List (2026 v7, March 2026).
+Maps normalized venue names to CCF rank (A/B/C) and category.
+Auto-generated from https://ccf.atom.im/ — 681 entries."""
+
+from typing import Literal
+
+CCFRank = Literal["A", "B", "C"]
+
+# {normalized_key: (rank, category)}
+_CCF_MAP: dict[str, tuple[CCFRank, str]] = {}
+_RANK_ORDER = {"A": 0, "B": 1, "C": 2}
+
+
+def _add(keys: list[str], rank: CCFRank, category: str):
+    for k in keys:
+        kl = k.lower().strip()
+        existing = _CCF_MAP.get(kl)
+        if existing and _RANK_ORDER[existing[0]] <= _RANK_ORDER[rank]:
+            continue  # keep higher rank
+        _CCF_MAP[kl] = (rank, category)
+
+# ==================== CCF-A Conferences ====================
+# --- Arch/HPC/Storage ---
+_add(["PPoPP", "ACM SIGPLAN Symposium on Principles & Practice of Parallel Programming"], "A", "Arch/HPC/Storage")
+_add(["FAST", "USENIX Conference on File and Storage Technologies"], "A", "Arch/HPC/Storage")
+_add(["DAC", "Design Automation Conference"], "A", "Arch/HPC/Storage")
+_add(["HPCA", "IEEE International Symposium on High Performance Computer Architecture"], "A", "Arch/HPC/Storage")
+_add(["MICRO", "IEEE/ACM International Symposium on Microarchitecture"], "A", "Arch/HPC/Storage")
+_add(["SC", "International Conference for High Performance Computing, Networking, Storage, and Analysis"], "A", "Arch/HPC/Storage")
+_add(["ASPLOS", "International Conference on Architectural Support for Programming Languages and Operating Systems"], "A", "Arch/HPC/Storage")
+_add(["ISCA", "International Symposium on Computer Architecture"], "A", "Arch/HPC/Storage")
+_add(["ACM SIGOPS ATC", "ACM SIGOPS Annual Technical Conference"], "A", "Arch/HPC/Storage")
+_add(["EuroSys", "European Conference on Computer Systems"], "A", "Arch/HPC/Storage")
+_add(["HPDC", "The International ACM Symposium on High-Performance Parallel and Distributed Computing"], "A", "Arch/HPC/Storage")
+
+# --- Network ---
+_add(["SIGCOMM", "ACM International Conference on Applications, Technologies, Architectures, and Protocols for Computer Communication"], "A", "Network")
+_add(["MobiCom", "ACM International Conference on Mobile Computing and Networking"], "A", "Network")
+_add(["INFOCOM", "IEEE International Conference on Computer Communications"], "A", "Network")
+_add(["NSDI", "Symposium on Network System Design and Implementation"], "A", "Network")
+
+# --- Security ---
+_add(["CCS", "ACM Conference on Computer and Communications Security"], "A", "Security")
+_add(["EUROCRYPT", "International Conference on the Theory and Applications of Cryptographic Techniques"], "A", "Security")
+_add(["S&P", "IEEE Symposium on Security and Privacy"], "A", "Security")
+_add(["CRYPTO", "International Cryptology Conference"], "A", "Security")
+_add(["USENIX Security", "USENIX Security Symposium"], "A", "Security")
+_add(["NDSS", "Network and Distributed System Security Symposium"], "A", "Security")
+
+# --- SE/PL ---
+_add(["PLDI", "ACM SIGPLAN Conference on Programming Language Design and Implementation"], "A", "SE/PL")
+_add(["POPL", "ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages"], "A", "SE/PL")
+_add(["FSE", "ACM International Conference on the Foundations of Software Engineering"], "A", "SE/PL")
+_add(["SOSP", "ACM Symposium on Operating Systems Principles"], "A", "SE/PL")
+_add(["OOPSLA", "Conference on Object-Oriented Programming Systems, Languages,and Applications"], "A", "SE/PL")
+_add(["ASE", "International Conference on Automated Software Engineering"], "A", "SE/PL")
+_add(["ICSE", "International Conference on Software Engineering"], "A", "SE/PL")
+_add(["ISSTA", "International Symposium on Software Testing and Analysis"], "A", "SE/PL")
+_add(["OSDI", "USENIX Symposium on Operating Systems Design and Implementations"], "A", "SE/PL")
+_add(["FM", "International Symposium on Formal Methods"], "A", "SE/PL")
+
+# --- DB/DM/IR ---
+_add(["SIGMOD", "ACM SIGMOD Conference"], "A", "DB/DM/IR")
+_add(["SIGKDD", "ACM SIGKDD Conference on Knowledge Discovery and Data Mining"], "A", "DB/DM/IR")
+_add(["ICDE", "IEEE International Conference on Data Engineering"], "A", "DB/DM/IR")
+_add(["SIGIR", "International ACM SIGIR Conference on Research and Development in Information Retrieval"], "A", "DB/DM/IR")
+_add(["VLDB", "International Conference on Very Large Data Bases"], "A", "DB/DM/IR")
+
+# --- Theory ---
+_add(["STOC", "ACM Symposium on Theory of Computing"], "A", "Theory")
+_add(["SODA", "ACM-SIAM Symposium on Discrete Algorithms"], "A", "Theory")
+_add(["CAV", "International Conference on Computer Aided Verification"], "A", "Theory")
+_add(["FOCS", "IEEE Annual Symposium on Foundations of Computer Science"], "A", "Theory")
+_add(["LICS", "ACM/IEEE Symposium on Logic in Computer Science"], "A", "Theory")
+
+# --- Graphics/MM ---
+_add(["ACM MM", "ACM International Conference on Multimedia"], "A", "Graphics/MM")
+_add(["SIGGRAPH", "ACM Special Interest Group on Computer Graphics"], "A", "Graphics/MM")
+_add(["VR", "IEEE Virtual Reality"], "A", "Graphics/MM")
+_add(["IEEE VIS", "IEEE Visualization Conference"], "A", "Graphics/MM")
+
+# --- AI ---
+_add(["AAAI", "AAAI Conference on Artificial Intelligence"], "A", "AI")
+_add(["NeurIPS", "Conference on Neural Information Processing Systems"], "A", "AI")
+_add(["ACL", "Annual Meeting of the Association for Computational Linguistics"], "A", "AI")
+_add(["CVPR", "IEEE/CVF Computer Vision and Pattern Recognition Conference"], "A", "AI")
+_add(["ICCV", "International Conference on Computer Vision"], "A", "AI")
+_add(["ICML", "International Conference on Machine Learning"], "A", "AI")
+_add(["ICLR", "International Conference on Learning Representations"], "A", "AI")
+
+# --- HCI ---
+_add(["CSCW", "ACM Conference on Computer Supported Cooperative Work and Social Computing"], "A", "HCI")
+_add(["CHI", "ACM Conference on Human Factors in Computing Systems"], "A", "HCI")
+_add(["UbiComp", "ACM International Joint Conference on Pervasive and Ubiquitous Computing"], "A", "HCI")
+_add(["UIST", "ACM Symposium on User Interface Software and Technology"], "A", "HCI")
+
+# --- Interdisciplinary ---
+_add(["WWW", "International World Wide Web Conference"], "A", "Interdisciplinary")
+_add(["RTSS", "IEEE Real-Time Systems Symposium"], "A", "Interdisciplinary")
+
+
+# ==================== CCF-B Conferences ====================
+# --- Arch/HPC/Storage ---
+_add(["SOCC", "ACM Symposium on Cloud Computing"], "B", "Arch/HPC/Storage")
+_add(["SPAA", "ACM Symposium on Parallelism in Algorithms and Architectures"], "B", "Arch/HPC/Storage")
+_add(["PODC", "ACM Symposium on Principles of Distributed Computing"], "B", "Arch/HPC/Storage")
+_add(["FPGA", "ACM/SIGDA International Symposium on Field-Programmable Gate Arrays"], "B", "Arch/HPC/Storage")
+_add(["CGO", "The International Symposium on Code Generation and Optimization"], "B", "Arch/HPC/Storage")
+_add(["DATE", "Design, Automation & Test in Europe"], "B", "Arch/HPC/Storage")
+_add(["HOT CHIPS", "Hot Chips: A Symposium on High Performance Chips"], "B", "Arch/HPC/Storage")
+_add(["CLUSTER", "IEEE International Conference on Cluster Computing"], "B", "Arch/HPC/Storage")
+_add(["ICCD", "International Conference on Computer Design"], "B", "Arch/HPC/Storage")
+_add(["ICCAD", "International Conference on Computer-Aided Design"], "B", "Arch/HPC/Storage")
+_add(["ICDCS", "IEEE International Conference on Distributed Computing Systems"], "B", "Arch/HPC/Storage")
+_add(["CODES+ISSS", "International Conference on Hardware/Software Co-design and System Synthesis"], "B", "Arch/HPC/Storage")
+_add(["HiPEAC", "International Conference on High Performance and Embedded Architectures and Compilers"], "B", "Arch/HPC/Storage")
+_add(["SIGMETRICS", "International Conference on Measurement and Modeling of Computer Systems"], "B", "Arch/HPC/Storage")
+_add(["PACT", "International Conference on Parallel Architectures and Compilation Techniques"], "B", "Arch/HPC/Storage")
+_add(["ICPP", "International Conference on Parallel Processing"], "B", "Arch/HPC/Storage")
+_add(["ICS", "International Conference on Supercomputing"], "B", "Arch/HPC/Storage")
+_add(["VEE", "International Conference on Virtual Execution Environments"], "B", "Arch/HPC/Storage")
+_add(["IPDPS", "IEEE International Parallel & Distributed Processing Symposium"], "B", "Arch/HPC/Storage")
+_add(["Performance", "International Symposium on Computer Performance, Modeling, Measurements and Evaluation"], "B", "Arch/HPC/Storage")
+_add(["ITC", "International Test Conference"], "B", "Arch/HPC/Storage")
+_add(["LISA", "Large Installation System Administration Conference"], "B", "Arch/HPC/Storage")
+_add(["MSST", "Mass Storage Systems and Technologies"], "B", "Arch/HPC/Storage")
+_add(["RTAS", "IEEE Real-Time and Embedded Technology and ApplicationsSymposium"], "B", "Arch/HPC/Storage")
+_add(["Euro-Par", "European Conference on Parallel and Distributed Computing"], "B", "Arch/HPC/Storage")
+_add(["ISCAS", "IEEE International Symposium on Circuits and Systems"], "B", "Arch/HPC/Storage")
+
+# --- Network ---
+_add(["SenSys", "ACM Conference on Embedded Networked Sensor Systems"], "B", "Network")
+_add(["CoNEXT", "ACM International Conference on emerging Networking EXperiments and Technologies"], "B", "Network")
+_add(["SECON", "IEEE International Conference on Sensing, Communication, and Networking"], "B", "Network")
+_add(["IPSN", "International Conference on Information Processing in Sensor Networks"], "B", "Network")
+_add(["MobiSys", "ACM International Conference on Mobile Systems, Applications, and Services"], "B", "Network")
+_add(["ICNP", "IEEE International Conference on Network Protocols"], "B", "Network")
+_add(["MobiHoc", "International Symposium on Theory, Algorithmic Foundations, and Protocol Design for Mobile Networks and Mobile Computing"], "B", "Network")
+_add(["NOSSDAV", "International Workshop on Network and Operating System Support for Digital Audio and Video"], "B", "Network")
+_add(["IWQoS", "IEEE/ACM International Workshop on Quality of Service"], "B", "Network")
+_add(["IMC", "ACM Internet Measurement Conference"], "B", "Network")
+
+# --- Security ---
+_add(["ACSAC", "Annual Computer Security Applications Conference"], "B", "Security")
+_add(["ASIACRYPT", "Annual International Conference on the Theory and Application of Cryptology and Information Security"], "B", "Security")
+_add(["ESORICS", "European Symposium on Research in Computer Security"], "B", "Security")
+_add(["FSE", "Fast Software Encryption"], "B", "Security")
+_add(["CSFW", "IEEE Computer Security Foundations Workshop"], "B", "Security")
+_add(["SRDS", "IEEE International Symposium on Reliable Distributed Systems"], "B", "Security")
+_add(["CHES", "International Conference on Cryptographic Hardware and Embedded Systems"], "B", "Security")
+_add(["DSN", "International Conference on Dependable Systems and Networks"], "B", "Security")
+_add(["RAID", "International Symposium on Recent Advances in Intrusion Detection"], "B", "Security")
+_add(["PKC", "International Workshop on Practice and Theory in Public Key Cryptography"], "B", "Security")
+_add(["TCC", "Theory of Cryptography Conference"], "B", "Security")
+
+# --- SE/PL ---
+_add(["ECOOP", "European Conference on Object-Oriented Programming"], "B", "SE/PL")
+_add(["ETAPS", "European Joint Conferences on Theory and Practice of Software"], "B", "SE/PL")
+_add(["ICPC", "IEEE International Conference on Program Comprehension"], "B", "SE/PL")
+_add(["RE", "IEEE International Requirements Engineering Conference"], "B", "SE/PL")
+_add(["CAiSE", "International Conference on Advanced Information Systems Engineering"], "B", "SE/PL")
+_add(["ICFP", "ACM SIGPLAN International Conference on Function Programming"], "B", "SE/PL")
+_add(["LCTES", "ACM SIGPLAN/SIGBED International Conference on Languages, Compilers andTools for Embedded Systems"], "B", "SE/PL")
+_add(["MoDELS", "ACM/IEEE International Conference on Model Driven Engineering Languages and Systems"], "B", "SE/PL")
+_add(["CP", "International Conference on Principles and Practice of Constraint Programming"], "B", "SE/PL")
+_add(["ICSOC", "International Conference on Service Oriented Computing"], "B", "SE/PL")
+_add(["SANER", "IEEE International Conference on Software Analysis, Evolution,and Reengineering"], "B", "SE/PL")
+_add(["ICSME", "International Conference on Software Maintenance and Evolution"], "B", "SE/PL")
+_add(["VMCAI", "International Conference on Verification,Model Checking, and Abstract Interpretation"], "B", "SE/PL")
+_add(["ICWS", "IEEE International Conference on Web Services"], "B", "SE/PL")
+_add(["Middleware", "International Middleware Conference"], "B", "SE/PL")
+_add(["SAS", "International Static Analysis Symposium"], "B", "SE/PL")
+_add(["ESEM", "International Symposium on Empirical Software Engineering and Measurement"], "B", "SE/PL")
+_add(["ISSRE", "IEEE International Symposium on Software Reliability Engineering"], "B", "SE/PL")
+_add(["HotOS", "USENIX Workshop on Hot Topics in Operating Systems"], "B", "SE/PL")
+_add(["CC", "International Conference on Compiler Construction"], "B", "SE/PL")
+
+# --- DB/DM/IR ---
+_add(["CIKM", "ACM International Conference on Information and Knowledge Management"], "B", "DB/DM/IR")
+_add(["WSDM", "ACM International Conference on Web Search and Data Mining"], "B", "DB/DM/IR")
+_add(["PODS", "ACM SIGMOD-SIGACT-SIGAI Symposium on Principles of Database Systems"], "B", "DB/DM/IR")
+_add(["DASFAA", "International Conference on Database Systems for Advanced Applications"], "B", "DB/DM/IR")
+_add(["ECML-PKDD", "European Conference on Machine Learning and Principles and Practice of Knowledge Discovery in Databases"], "B", "DB/DM/IR")
+_add(["ISWC", "IEEE International Semantic Web Conference"], "B", "DB/DM/IR")
+_add(["ICDM", "IEEE International Conference on Data Mining"], "B", "DB/DM/IR")
+_add(["ICDT", "International Conference on Database Theory"], "B", "DB/DM/IR")
+_add(["EDBT", "International Conference on Extending DatabaseTechnology"], "B", "DB/DM/IR")
+_add(["CIDR", "Conference on Innovative DataSystems Research"], "B", "DB/DM/IR")
+_add(["SDM", "SIAM International Conference on Data Mining"], "B", "DB/DM/IR")
+_add(["RecSys", "ACM Conference on Recommender Systems"], "B", "DB/DM/IR")
+_add(["WISE", "Web Information Systems Engineering"], "B", "DB/DM/IR")
+
+# --- Theory ---
+_add(["SoCG", "International Symposium on Computational Geometry"], "B", "Theory")
+_add(["ESA", "European Symposium on Algorithms"], "B", "Theory")
+_add(["CCC", "Conference on Computational Complexity"], "B", "Theory")
+_add(["ICALP", "International Colloquium on Automata, Languages and Programming"], "B", "Theory")
+_add(["CADE", "International Conference on Automated Deduction"], "B", "Theory")
+_add(["CONCUR", "International Conference on Concurrency Theory"], "B", "Theory")
+_add(["HSCC", "International Conference on Hybrid Systems: Computation and Control"], "B", "Theory")
+_add(["SAT", "International Conference on Theory and Applications of Satisfiability Testing"], "B", "Theory")
+_add(["COCOON", "International Computing and Combinatorics Conference"], "B", "Theory")
+_add(["FMCAD", "Formal Method in Computer-Aided Design"], "B", "Theory")
+
+# --- Graphics/MM ---
+_add(["ICMR", "ACM SIGMM International Conference on Multimedia Retrieval"], "B", "Graphics/MM")
+_add(["I3D", "ACM SIGGRAPH Symposium onInteractive 3D Graphics and Games"], "B", "Graphics/MM")
+_add(["SCA", "ACM SIGGRAPH/Eurographics Symposium on Computer Animation"], "B", "Graphics/MM")
+_add(["DCC", "Data Compression Conference"], "B", "Graphics/MM")
+_add(["Eurographics", "Annual Conference of the European Association for Computer Graphics"], "B", "Graphics/MM")
+_add(["EuroVis", "Eurographics Conference on Visualization"], "B", "Graphics/MM")
+_add(["SGP", "Eurographics Symposium on Geometry Processing"], "B", "Graphics/MM")
+_add(["EGSR", "Eurographics Symposium on Rendering"], "B", "Graphics/MM")
+_add(["ICASSP", "IEEE International Conference on Acoustics,Speech and Signal Processing"], "B", "Graphics/MM")
+_add(["ICME", "IEEE International Conference on Multimedia& Expo"], "B", "Graphics/MM")
+_add(["ISMAR", "International Symposium on Mixed and Augmented Reality"], "B", "Graphics/MM")
+_add(["PG", "Pacific Conference on Computer Graphics and Applications"], "B", "Graphics/MM")
+_add(["SPM", "Symposium on Solid and Physical Modeling"], "B", "Graphics/MM")
+_add(["INTERSPEECH", "Conference of the International Speech Communication Association"], "B", "Graphics/MM")
+
+# --- AI ---
+_add(["COLT", "Annual Conference on Computational Learning Theory"], "B", "AI")
+_add(["EMNLP", "Conference on Empirical Methods in Natural Language Processing"], "B", "AI")
+_add(["ECAI", "European Conference on Artificial Intelligence"], "B", "AI")
+_add(["ECCV", "European Conference on Computer Vision"], "B", "AI")
+_add(["ICRA", "IEEE International Conference on Robotics and Automation"], "B", "AI")
+_add(["ICAPS", "International Conference on Automated Planning and Scheduling"], "B", "AI")
+_add(["ICCBR", "International Conference on Case-Based Reasoning"], "B", "AI")
+_add(["COLING", "International Conference on Computational Linguistics"], "B", "AI")
+_add(["KR", "International Conference on Principles of Knowledge Representation and Reasoning"], "B", "AI")
+_add(["UAI", "Conference on Uncertainty in ArtificialIntelligence"], "B", "AI")
+_add(["AAMAS", "International Joint Conference on Autonomous Agents and Multi-agent Systems"], "B", "AI")
+_add(["PPSN", "Parallel Problem Solving from Nature"], "B", "AI")
+_add(["NAACL", "North American Chapter of the Associationfor Computational Linguistics"], "B", "AI")
+_add(["IJCAI", "International Joint Conference on Artificial Intelligence"], "B", "AI")
+
+# --- HCI ---
+_add(["GROUP", "ACM International Conference on Supporting Group Work"], "B", "HCI")
+_add(["IUI", "ACM International Conference on Intelligent User Interfaces"], "B", "HCI")
+_add(["ISS", "ACM International Conference on Interactive Surfaces and Spaces"], "B", "HCI")
+_add(["ECSCW", "European Conference on Computer Supported Cooperative Work"], "B", "HCI")
+_add(["PERCOM", "IEEE International Conference on Pervasive Computing and Communications"], "B", "HCI")
+_add(["MobileHCI", "ACM International Conference on Mobile Human-Computer Interaction"], "B", "HCI")
+_add(["ICWSM", "The International AAAI Conference on Web and Social Media"], "B", "HCI")
+
+# --- Interdisciplinary ---
+_add(["CogSci", "Annual Meeting of the Cognitive Science Society"], "B", "Interdisciplinary")
+_add(["BIBM", "IEEE International Conference on Bioinformatics and Biomedicine"], "B", "Interdisciplinary")
+_add(["EMSOFT", "International Conference on Embedded Software"], "B", "Interdisciplinary")
+_add(["ISMB", "International conference on Intelligent Systems for Molecular Biology"], "B", "Interdisciplinary")
+_add(["RECOMB", "Annual International Conference on Research inComputational Molecular Biology"], "B", "Interdisciplinary")
+_add(["MICCAI", "International Conference on Medical Image Computing and Computer-Assisted Intervention"], "B", "Interdisciplinary")
+_add(["WINE", "Conference on Web and Internet Economics"], "B", "Interdisciplinary")
+
+
+# ==================== CCF-C Conferences ====================
+# --- Arch/HPC/Storage ---
+_add(["CF", "ACM International Conference on Computing Frontiers"], "C", "Arch/HPC/Storage")
+_add(["SYSTOR", "ACM International Systems and Storage Conference"], "C", "Arch/HPC/Storage")
+_add(["NOCS", "ACM/IEEE International Symposium on Networks-on-Chip"], "C", "Arch/HPC/Storage")
+_add(["ASAP", "IEEE International Conference on Application-Specific Systems, Architectures, and Processors"], "C", "Arch/HPC/Storage")
+_add(["ASP-DAC", "Asia and South Pacific Design Automation Conference"], "C", "Arch/HPC/Storage")
+_add(["ETS", "IEEE European Test Symposium"], "C", "Arch/HPC/Storage")
+_add(["FPL", "International Conference on Field-Programmable Logic and Applications"], "C", "Arch/HPC/Storage")
+_add(["FCCM", "IEEE Symposium on Field-Programmable Custom Computing Machines"], "C", "Arch/HPC/Storage")
+_add(["GLSVLSI", "Great Lakes Symposium on VLSI"], "C", "Arch/HPC/Storage")
+_add(["ATS", "IEEE Asian Test Symposium"], "C", "Arch/HPC/Storage")
+_add(["HPCC", "IEEE International Conference on High Performance Computing and Communications"], "C", "Arch/HPC/Storage")
+_add(["HiPC", "IEEE International Conference on High Performance Computing, Data and Analytics"], "C", "Arch/HPC/Storage")
+_add(["MASCOTS", "International Symposium on Modeling, Analysis, andSimulation of Computer and Telecommunication Systems"], "C", "Arch/HPC/Storage")
+_add(["ISPA", "IEEE International Symposium on Parallel and Distributed Processing with Applications"], "C", "Arch/HPC/Storage")
+_add(["CCGRID", "IEEE/ACM International Symposium on Cluster, Cloud and Grid Computing"], "C", "Arch/HPC/Storage")
+_add(["NPC", "IFIP International Conference on Network and Parallel Computing"], "C", "Arch/HPC/Storage")
+_add(["ICA3PP", "International Conference on Algorithms and Architectures for Parallel Processing"], "C", "Arch/HPC/Storage")
+_add(["CASES", "International Conference on Compilers, Architectures, and Synthesis for Embedded Systems"], "C", "Arch/HPC/Storage")
+_add(["FPT", "International Conference on Field-Programmable Technology"], "C", "Arch/HPC/Storage")
+_add(["ICPADS", "International Conference on Parallel and Distributed Systems"], "C", "Arch/HPC/Storage")
+_add(["ISLPED", "International Symposium on Low Power Electronics and Design"], "C", "Arch/HPC/Storage")
+_add(["ISPD", "International Symposium on Physical Design"], "C", "Arch/HPC/Storage")
+_add(["HOTI", "IEEE Symposium on High-Performance Interconnects"], "C", "Arch/HPC/Storage")
+_add(["VTS", "IEEE VLSI Test Symposium"], "C", "Arch/HPC/Storage")
+_add(["ITC-Asia", "International Test Conference in Asia"], "C", "Arch/HPC/Storage")
+_add(["SEC", "ACM/IEEE Symposium on Edge Computing"], "C", "Arch/HPC/Storage")
+_add(["NAS", "International Conference on Networking, Architecture and Storages"], "C", "Arch/HPC/Storage")
+_add(["HotStorage", "Hot Topics in Storage and File Systems"], "C", "Arch/HPC/Storage")
+_add(["APPT", "International Symposium on Advanced Parallel Processing Technology"], "C", "Arch/HPC/Storage")
+_add(["JCC", "CCF&IEEE International Conference on Joint Cloud Computing"], "C", "Arch/HPC/Storage")
+
+# --- Network ---
+_add(["ANCS", "ACM/IEEE Symposium on Architectures for Networking and Communication Systems"], "C", "Network")
+_add(["APNOMS", "Asia-Pacific Network Operations and Management Symposium"], "C", "Network")
+_add(["FORTE", "International Conference on Formal Techniques for Distributed Objects, Components, and Systems"], "C", "Network")
+_add(["LCN", "IEEE Conference on Local Computer Networks"], "C", "Network")
+_add(["GLOBECOM", "IEEE Global Communications Conference"], "C", "Network")
+_add(["ICC", "IEEE International Conference on Communications"], "C", "Network")
+_add(["ICCCN", "IEEE International Conference on Computer Communications and Networks"], "C", "Network")
+_add(["MASS", "IEEE International Conference on Mobile Ad-hoc and Sensor Systems"], "C", "Network")
+_add(["P2P", "IEEE International Conference on P2P Computing"], "C", "Network")
+_add(["IPCCC", "IEEE International Performance Computing and Communications Conference"], "C", "Network")
+_add(["WoWMoM", "IEEE International Symposium on a World of Wireless Mobile and Multimedia Networks"], "C", "Network")
+_add(["ISCC", "IEEE Symposium on Computers and Communications"], "C", "Network")
+_add(["WCNC", "IEEE Wireless Communications and Networking Conference"], "C", "Network")
+_add(["Networking", "IFIP International Conferences on Networking"], "C", "Network")
+_add(["IM", "IFIP/IEEE International Symposium on Integrated NetworkManagement"], "C", "Network")
+_add(["MSN", "International Conference on Mobility, Sensing and Networking"], "C", "Network")
+_add(["MSWiM", "International Conference on Modeling, Analysis and Simulation of Wireless and Mobile Systems"], "C", "Network")
+_add(["WASA", "The International Conference on Wireless Artificial Intelligent Computing Systems and Applications"], "C", "Network")
+_add(["HotNets", "ACM The Workshop on Hot Topics in Networks"], "C", "Network")
+_add(["APNet", "Asia-Pacific Workshop on Networking"], "C", "Network")
+
+# --- Security ---
+_add(["WiSec", "ACM Conference on Security and Privacy in Wireless and Mobile Networks"], "C", "Security")
+_add(["SACMAT", "ACM Symposium on Access Control Models and Technologies"], "C", "Security")
+_add(["DRM", "ACM Workshop on Digital Rights Management"], "C", "Security")
+_add(["IH&MMSec", "ACM Workshop on Information Hiding and Multimedia Security"], "C", "Security")
+_add(["ACNS", "International Conference on Applied Cryptography and Network Security"], "C", "Security")
+_add(["AsiaCCS", "ACM Asia Conference on Computer and Communications Security"], "C", "Security")
+_add(["ACISP", "AustralasiaConferenceonInformation SecurityandPrivacy"], "C", "Security")
+_add(["CT-RSA", "The Cryptographer’s Track at RSA Conference"], "C", "Security")
+_add(["DIMVA", "Conference on Detection of Intrusions and Malware & VulnerabilityAssessment"], "C", "Security")
+_add(["DFRWS", "Digital Forensic Research Workshop"], "C", "Security")
+_add(["FC", "Financial Cryptography and Data Security"], "C", "Security")
+_add(["TrustCom", "IEEE International Conference on Trust,Security and Privacy in Computing and Communications"], "C", "Security")
+_add(["SEC", "IFIP International Information Security Conference"], "C", "Security")
+_add(["IFIP WG 11.9", "IFIP Working Group 11.9 International Conference on Digital Forensics"], "C", "Security")
+_add(["ISC", "Information Security Conference"], "C", "Security")
+_add(["ICDF2C", "International Conference on Digital Forensics & Cyber Crime"], "C", "Security")
+_add(["ICICS", "International Conference on Information and Communications Security"], "C", "Security")
+_add(["SecureComm", "International Conference on Security and Privacy in Communication Networks"], "C", "Security")
+_add(["NSPW", "New Security Paradigms Workshop"], "C", "Security")
+_add(["PAM", "Passive and Active Measurement Conference"], "C", "Security")
+_add(["PETS", "Privacy Enhancing Technologies Symposium"], "C", "Security")
+_add(["SAC", "Selected Areas in Cryptography"], "C", "Security")
+_add(["SOUPS", "Symposium On Usable Privacy and Security"], "C", "Security")
+_add(["HotSec"], "C", "Security")
+_add(["EuroS&P", "IEEE European Symposium on Security and Privacy"], "C", "Security")
+_add(["Inscrypt", "International Conference on Information Security and Cryptology"], "C", "Security")
+_add(["CODASPY", "Conference on Data and Application Security and Privacy"], "C", "Security")
+_add(["BlockSys", "International Conference on Blockchain, Artificial Intelligence and Trustworthy Systems"], "C", "Security")
+_add(["CSCloud", "International Conference on Cyber Security and Cloud Computing"], "C", "Security")
+
+# --- SE/PL ---
+_add(["PEPM", "ACM SIGPLAN Workshop on Partial Evaluation and Program Manipulation"], "C", "SE/PL")
+_add(["PASTE", "ACMSIGPLAN-SIGSOFT Workshop on Program Analysis for Software Tools and Engineering"], "C", "SE/PL")
+_add(["APLAS", "Asian Symposium on Programming Languages and Systems"], "C", "SE/PL")
+_add(["APSEC", "Asia-Pacific Software Engineering Conference"], "C", "SE/PL")
+_add(["EASE", "International Conference on Evaluation and Assessment in Software Engineering"], "C", "SE/PL")
+_add(["ICECCS", "International Conference on Engineering of Complex Computer Systems"], "C", "SE/PL")
+_add(["ICST", "IEEE International Conference on Software Testing, Verification and Validation"], "C", "SE/PL")
+_add(["ISPASS", "IEEE International Symposium on Performance Analysis of Systems and Software"], "C", "SE/PL")
+_add(["SCAM", "IEEE International Working Conference on Source Code Analysis and Manipulation"], "C", "SE/PL")
+_add(["COMPSAC", "International Computer Software and Applications Conference"], "C", "SE/PL")
+_add(["ICFEM", "International Conference on Formal Engineering Methods"], "C", "SE/PL")
+_add(["SSE", "IEEE International Conference on Software Services Engineering"], "C", "SE/PL")
+_add(["ICSSP", "International Conference on Software and System Process"], "C", "SE/PL")
+_add(["SEKE", "International Conference on Software Engineering and Knowledge Engineering"], "C", "SE/PL")
+_add(["QRS", "International Conference on Software Quality, Reliability and Security"], "C", "SE/PL")
+_add(["ICSR", "International Conference on Software Reuse"], "C", "SE/PL")
+_add(["ICWE", "International Conference on Web Engineering"], "C", "SE/PL")
+_add(["SPIN", "International Symposium on Model Checking of Software"], "C", "SE/PL")
+_add(["ATVA", "International Symposium on Automated Technology for Verification and Analysis"], "C", "SE/PL")
+_add(["LOPSTR", "International Symposium on Logic-based Program Synthesis and Transformation"], "C", "SE/PL")
+_add(["TASE", "Theoretical Aspects of Software Engineering Conference"], "C", "SE/PL")
+_add(["MSR", "Mining Software Repositories"], "C", "SE/PL")
+_add(["REFSQ", "Requirements Engineering: Foundation for Software Quality"], "C", "SE/PL")
+_add(["WICSA", "Working IEEE/IFIP Conference on Software Architecture"], "C", "SE/PL")
+_add(["Internetware", "Asia-Pacific Symposium on Internetware"], "C", "SE/PL")
+_add(["RV", "International Conference on Runtime Verification"], "C", "SE/PL")
+_add(["MEMOCODE", "International Conference on Formal Methods and Models for Co-Design"], "C", "SE/PL")
+
+# --- DB/DM/IR ---
+_add(["APWeb", "Asia Pacific Web Conference"], "C", "DB/DM/IR")
+_add(["DEXA", "International Conference on Database and Expert System Applications"], "C", "DB/DM/IR")
+_add(["ECIR", "European Conference on Information Retrieval"], "C", "DB/DM/IR")
+_add(["ESWC", "Extended Semantic Web Conference"], "C", "DB/DM/IR")
+_add(["WebDB", "International Workshop on Web andDatabases"], "C", "DB/DM/IR")
+_add(["ER", "International Conference on Conceptual Modeling"], "C", "DB/DM/IR")
+_add(["MDM", "International Conference on Mobile Data Management"], "C", "DB/DM/IR")
+_add(["SSDBM", "International Conference on Scientific andStatistical Database Management"], "C", "DB/DM/IR")
+_add(["WAIM", "International Conference on Web Age Information Management"], "C", "DB/DM/IR")
+_add(["SSTD", "International Symposium on Spatial and Temporal Databases"], "C", "DB/DM/IR")
+_add(["PAKDD", "Pacific-Asia Conference on Knowledge Discovery and Data Mining"], "C", "DB/DM/IR")
+_add(["ADMA", "International Conference on Advanced Data Mining and Applications"], "C", "DB/DM/IR")
+_add(["WISA", "Web Information Systems and Applications"], "C", "DB/DM/IR")
+
+# --- Theory ---
+_add(["CSL", "Computer Science Logic"], "C", "Theory")
+_add(["FSTTCS", "Foundations of Software Technology and Theoretical Computer Science"], "C", "Theory")
+_add(["DSAA", "IEEE International Conference on Data Science and Advanced Analytics"], "C", "Theory")
+_add(["ICTAC", "International Colloquium on Theoretical Aspects of Computing"], "C", "Theory")
+_add(["IPCO", "International Conference on Integer Programming and Combinatorial Optimization"], "C", "Theory")
+_add(["FSCD", "International Conference on Formal Structures for Computation and Deduction"], "C", "Theory")
+_add(["ISAAC", "International Symposium on Algorithms and Computation"], "C", "Theory")
+_add(["MFCS", "International Conference on Mathematical Foundations of Computer Science"], "C", "Theory")
+_add(["STACS", "Symposium on Theoretical Aspects of Computer Science"], "C", "Theory")
+_add(["SETTA", "International Symposium on Dependable Software Engineering: Theories, Tools, and Applications"], "C", "Theory")
+
+# --- Graphics/MM ---
+_add(["VRST", "ACM Symposium on Virtual Reality Software and Technology"], "C", "Graphics/MM")
+_add(["CASA", "International Conference on Computer Animation and Social Agents"], "C", "Graphics/MM")
+_add(["CGI", "Computer Graphics International"], "C", "Graphics/MM")
+_add(["GMP", "Geometric Modeling and Processing"], "C", "Graphics/MM")
+_add(["PacificVis", "IEEE Pacific Visualization Symposium"], "C", "Graphics/MM")
+_add(["3DV", "International Conference on 3D Vision"], "C", "Graphics/MM")
+_add(["CAD/Graphics", "International Conference on Computer-Aided Design and Computer Graphics"], "C", "Graphics/MM")
+_add(["ICIP", "IEEE International Conference on Image Processing"], "C", "Graphics/MM")
+_add(["MMM", "International Conference on Multimedia Modeling"], "C", "Graphics/MM")
+_add(["MMAsia", "ACM Multimedia Asia"], "C", "Graphics/MM")
+_add(["SMI", "Shape Modeling International"], "C", "Graphics/MM")
+_add(["CVM", "Computational Visual Media"], "C", "Graphics/MM")
+_add(["PRCV", "Chinese Conference on Pattern Recognition and Computer Vision"], "C", "Graphics/MM")
+_add(["ICIG", "International Conference on Image and Graphics"], "C", "Graphics/MM")
+_add(["NCMMSC", "National Conference on Man-Machine Speech Communication"], "C", "Graphics/MM")
+_add(["ASRU", "Automatic Speech Recognition and Understanding Workshop"], "C", "Graphics/MM")
+_add(["SLT", "Spoken Language Technology"], "C", "Graphics/MM")
+
+# --- AI ---
+_add(["AISTATS", "International Conference on Artificial Intelligence and Statistics"], "C", "AI")
+_add(["ACCV", "Asian Conference on Computer Vision"], "C", "AI")
+_add(["ACML", "Asian Conference on Machine Learning"], "C", "AI")
+_add(["BMVC", "British Machine Vision Conference"], "C", "AI")
+_add(["NLPCC", "CCF International Conference on Natural Language Processing and Chinese Computing"], "C", "AI")
+_add(["CoNLL", "Conference on Computational Natural Language Learning"], "C", "AI")
+_add(["GECCO", "Genetic and Evolutionary Computation Conference"], "C", "AI")
+_add(["ICTAI", "IEEE International Conference on Tools with Artificial Intelligence"], "C", "AI")
+_add(["IROS", "IEEE/RSJ International Conference on Intelligent Robots and Systems"], "C", "AI")
+_add(["ALT", "International Conference on Algorithmic Learning Theory"], "C", "AI")
+_add(["ICANN", "International Conference on Artificial Neural Networks"], "C", "AI")
+_add(["FG", "IEEE International Conference on AutomaticFace and Gesture Recognition"], "C", "AI")
+_add(["ICDAR", "International Conference on Document Analysis and Recognition"], "C", "AI")
+_add(["ILP", "International Conference on Inductive Logic Programming"], "C", "AI")
+_add(["KSEM", "International conference on Knowledge Science,Engineering and Management"], "C", "AI")
+_add(["ICONIP", "International Conference on Neural Information Processing"], "C", "AI")
+_add(["ICPR", "International Conference on Pattern Recognition"], "C", "AI")
+_add(["IJCB", "International Joint Conference onBiometrics"], "C", "AI")
+_add(["IJCNN", "International Joint Conference on Neural Networks"], "C", "AI")
+_add(["PRICAI", "Pacific Rim International Conference on Artificial Intelligence"], "C", "AI")
+_add(["IEEE CEC", "Congress on Evolutionary Computation"], "C", "AI")
+_add(["DAI", "International Conference on Distributed Artificial Intelligence"], "C", "AI")
+
+# --- HCI ---
+_add(["DIS", "ACM SIGCHI Conference on Designing Interactive Systems"], "C", "HCI")
+_add(["ICMI", "ACM International Conference on Multimodal Interaction"], "C", "HCI")
+_add(["ASSETS", "International ACM SIGACCESS Conference on Computers and Accessibility"], "C", "HCI")
+_add(["GI", "Graphics Interface"], "C", "HCI")
+_add(["UIC", "IEEE International Conference on Ubiquitous Intelligence and Computing"], "C", "HCI")
+_add(["IEEE World Haptics Conference"], "C", "HCI")
+_add(["INTERACT", "International Conference on Human- Computer Interaction of International Federation for Information Processing"], "C", "HCI")
+_add(["IDC", "ACM Interaction Design and Children"], "C", "HCI")
+_add(["CollaborateCom", "International Conference on Collaborative Computing:Networking, Applications and Worksharing"], "C", "HCI")
+_add(["CSCWD", "International Conference on Computer Supported Cooperative Work in Design"], "C", "HCI")
+_add(["CoopIS", "International Conference on Cooperative Information Systems"], "C", "HCI")
+_add(["MobiQuitous", "International Conference on Mobile and Ubiquitous Systems: Computing,Networking and Services"], "C", "HCI")
+_add(["AVI", "International Working Conference on Advanced Visual Interfaces"], "C", "HCI")
+_add(["GPC", "Conference on Green, Pervasive and Cloud Computing"], "C", "HCI")
+_add(["ICXR", "CCF International Conference on Extended Reality"], "C", "HCI")
+
+# --- Interdisciplinary ---
+_add(["AMIA", "American Medical Informatics Association Annual Symposium"], "C", "Interdisciplinary")
+_add(["APBC", "Asia Pacific Bioinformatics Conference"], "C", "Interdisciplinary")
+_add(["IEEE BigData", "IEEE International Conference on Big Data"], "C", "Interdisciplinary")
+_add(["IEEE CLOUD", "IEEE International Conference on Cloud Computing"], "C", "Interdisciplinary")
+_add(["SMC", "IEEE International Conference on Systems, Man, and Cybernetics"], "C", "Interdisciplinary")
+_add(["COSIT", "International Conference on Spatial Information Theory"], "C", "Interdisciplinary")
+_add(["ISBRA", "International Symposium on Bioinformatics Research and Applications"], "C", "Interdisciplinary")
+_add(["SAGT", "International Symposium on Algorithmic Game Theory"], "C", "Interdisciplinary")
+_add(["SIGSPATIAL", "ACM Special Interest Group on Spatial Information"], "C", "Interdisciplinary")
+_add(["ICIC", "International Conference on Intelligent Computing"], "C", "Interdisciplinary")
+_add(["ICSS", "International Conference on Service Science"], "C", "Interdisciplinary")
+_add(["AFT", "Advances in Financial Technologies"], "C", "Interdisciplinary")
+_add(["IJTCS-FAW", "International Joint Conference on Theoretical Computer Science-Frontier of Algorithmic Wisdom"], "C", "Interdisciplinary")
+
+
+# ==================== CCF-A Journals ====================
+# --- Arch/HPC/Storage ---
+_add(["TOCS", "ACM Transactions on Computer Systems"], "A", "Arch/HPC/Storage")
+_add(["TOS", "ACM Transactions on Storage"], "A", "Arch/HPC/Storage")
+_add(["TCAD", "IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems"], "A", "Arch/HPC/Storage")
+_add(["TC", "IEEE Transactions on Computers"], "A", "Arch/HPC/Storage")
+_add(["TPDS", "IEEE Transactions on Parallel and Distributed Systems"], "A", "Arch/HPC/Storage")
+_add(["TACO", "ACM Transactions on Architecture and Code Optimization"], "A", "Arch/HPC/Storage")
+
+# --- Network ---
+_add(["JSAC", "IEEE Journal on Selected Areas in Communications"], "A", "Network")
+_add(["TMC", "IEEE Transactions on Mobile Computing"], "A", "Network")
+_add(["TON", "IEEE/ACM Transactions on Networking"], "A", "Network")
+
+# --- Security ---
+_add(["TDSC", "IEEE Transactions on Dependable and Secure Computing"], "A", "Security")
+_add(["TIFS", "IEEE Transactions on Information Forensics and Security"], "A", "Security")
+_add(["Journal of Cryptology"], "A", "Security")
+
+# --- SE/PL ---
+_add(["TOPLAS", "ACM Transactions on Programming Languages and Systems"], "A", "SE/PL")
+_add(["TOSEM", "ACM Transactions on Software Engineering and Methodology"], "A", "SE/PL")
+_add(["TSE", "IEEE Transactions on Software Engineering"], "A", "SE/PL")
+_add(["TSC", "IEEE Transactions on Services Computing"], "A", "SE/PL")
+
+# --- DB/DM/IR ---
+_add(["TODS", "ACM Transactions on Database Systems"], "A", "DB/DM/IR")
+_add(["TOIS", "ACM Transactions on Information Systems"], "A", "DB/DM/IR")
+_add(["TKDE", "IEEE Transactions on Knowledge and Data Engineering"], "A", "DB/DM/IR")
+_add(["VLDBJ", "The VLDB Journal"], "A", "DB/DM/IR")
+
+# --- Theory ---
+_add(["TIT", "IEEE Transactions on Information Theory"], "A", "Theory")
+_add(["IANDC", "Information and Computation"], "A", "Theory")
+_add(["SICOMP", "SIAM Journal on Computing"], "A", "Theory")
+
+# --- Graphics/MM ---
+_add(["TOG", "ACM Transactions on Graphics"], "A", "Graphics/MM")
+_add(["TIP", "IEEE Transactions on Image Processing"], "A", "Graphics/MM")
+_add(["TVCG", "IEEE Transactions on Visualization and Computer Graphics"], "A", "Graphics/MM")
+_add(["TMM", "IEEE Transactions on Multimedia"], "A", "Graphics/MM")
+
+# --- AI ---
+_add(["AI", "Artificial Intelligence"], "A", "AI")
+_add(["TPAMI", "IEEE Transactions on Pattern Analysis and Machine Intelligence"], "A", "AI")
+_add(["IJCV", "International Journal of Computer Vision"], "A", "AI")
+_add(["JMLR", "Journal of Machine Learning Research"], "A", "AI")
+
+# --- HCI ---
+_add(["TOCHI", "ACM Transactions on Computer-Human Interaction"], "A", "HCI")
+_add(["IJHCS", "International Journal of Human-Computer Studies"], "A", "HCI")
+
+# --- Interdisciplinary ---
+_add(["JACM", "Journal of the ACM"], "A", "Interdisciplinary")
+_add(["Proc. IEEE", "Proceedings of the IEEE"], "A", "Interdisciplinary")
+_add(["SCIS", "Science China Information Sciences"], "A", "Interdisciplinary")
+_add(["Bioinformatics", "Bioinformatics"], "A", "Interdisciplinary")
+
+
+# ==================== CCF-B Journals ====================
+# --- Arch/HPC/Storage ---
+_add(["TAAS", "ACM Transactions on Autonomous and Adaptive Systems"], "B", "Arch/HPC/Storage")
+_add(["TODAES", "ACM Transactions on Design Automation of Electronic Systems"], "B", "Arch/HPC/Storage")
+_add(["TECS", "ACM Transactions on Embedded Computing Systems"], "B", "Arch/HPC/Storage")
+_add(["TRETS", "ACM Transactions on Reconfigurable Technology and Systems"], "B", "Arch/HPC/Storage")
+_add(["TVLSI", "IEEE Transactions on Very Large Scale Integration (VLSI) Systems"], "B", "Arch/HPC/Storage")
+_add(["JPDC", "Journal of Parallel and Distributed Computing"], "B", "Arch/HPC/Storage")
+_add(["JSA", "Journal of Systems Architecture: Embedded Software Design"], "B", "Arch/HPC/Storage")
+_add(["Parallel Computing"], "B", "Arch/HPC/Storage")
+_add(["Performance Evaluation: An International Journal"], "B", "Arch/HPC/Storage")
+_add(["TCC", "IEEE Transactions on Cloud Computing"], "B", "Arch/HPC/Storage")
+
+# --- Network ---
+_add(["TOIT", "ACM Transactions on Internet Technology"], "B", "Network")
+_add(["TOMM", "ACM Transactions on Multimedia Computing, Communications and Applications"], "B", "Network")
+_add(["TOSN", "ACM Transactions on Sensor Networks"], "B", "Network")
+_add(["CN", "Computer Networks"], "B", "Network")
+_add(["TCOM", "IEEE Transactions on Communications"], "B", "Network")
+_add(["TWC", "IEEE Transactions on Wireless Communications"], "B", "Network")
+
+# --- Security ---
+_add(["TOPS", "ACM Transactions on Privacy and Security"], "B", "Security")
+_add(["Computers & Security"], "B", "Security")
+_add(["Designs, Codes and Cryptography"], "B", "Security")
+_add(["JCS", "Journal of Computer Security"], "B", "Security")
+_add(["Cybersecurity", "Cybersecurity"], "B", "Security")
+
+# --- SE/PL ---
+_add(["ASE", "Automated Software Engineering"], "B", "SE/PL")
+_add(["ESE", "Empirical Software Engineering"], "B", "SE/PL")
+_add(["IETS", "IET Software"], "B", "SE/PL")
+_add(["IST", "Information and Software Technology"], "B", "SE/PL")
+_add(["JFP", "Journal of Functional Programming"], "B", "SE/PL")
+_add(["Journal of Software: Evolution and Process"], "B", "SE/PL")
+_add(["JSS", "Journal of Systems and Software"], "B", "SE/PL")
+_add(["RE", "Requirements Engineering"], "B", "SE/PL")
+_add(["SCP", "Science of Computer Programming"], "B", "SE/PL")
+_add(["SoSyM", "Software and Systems Modeling"], "B", "SE/PL")
+_add(["STVR", "Software Testing, Verification and Reliability"], "B", "SE/PL")
+_add(["SPE", "Software: Practice and Experience"], "B", "SE/PL")
+
+# --- DB/DM/IR ---
+_add(["TKDD", "ACM Transactions on Knowledge Discovery from Data"], "B", "DB/DM/IR")
+_add(["TWEB", "ACM Transactions on the Web"], "B", "DB/DM/IR")
+_add(["AEI", "Advanced Engineering Informatics"], "B", "DB/DM/IR")
+_add(["DKE", "Data & Knowledge Engineering"], "B", "DB/DM/IR")
+_add(["DMKD", "Data Mining and Knowledge Discovery"], "B", "DB/DM/IR")
+_add(["EJIS", "European Journal of Information Systems"], "B", "DB/DM/IR")
+_add(["GeoInformatica"], "B", "DB/DM/IR")
+_add(["IPM", "Information Processing and Management"], "B", "DB/DM/IR")
+_add(["Information Sciences"], "B", "DB/DM/IR")
+_add(["IS", "Information Systems"], "B", "DB/DM/IR")
+_add(["JASIST", "Journal of the Association for Information Science and Technology"], "B", "DB/DM/IR")
+_add(["JWS", "Journal of Web Semantics"], "B", "DB/DM/IR")
+_add(["KAIS", "Knowledge and Information Systems"], "B", "DB/DM/IR")
+_add(["DSE", "Data Science and Engineering"], "B", "DB/DM/IR")
+
+# --- Theory ---
+_add(["TALG", "ACM Transactions on Algorithms"], "B", "Theory")
+_add(["TOCL", "ACM Transactions on Computational Logic"], "B", "Theory")
+_add(["TOMS", "ACM Transactions on Mathematical Software"], "B", "Theory")
+_add(["Algorithmica", "Algorithmica"], "B", "Theory")
+_add(["CC", "Computational complexity"], "B", "Theory")
+_add(["FAC", "Formal Aspects of Computing"], "B", "Theory")
+_add(["FMSD", "Formal Methods in System Design"], "B", "Theory")
+_add(["INFORMS", "INFORMS Journal on Computing"], "B", "Theory")
+_add(["JCSS", "Journal of Computer and System Sciences"], "B", "Theory")
+_add(["JGO", "Journal of Global Optimization"], "B", "Theory")
+_add(["JSC", "Journal of Symbolic Computation"], "B", "Theory")
+_add(["MSCS", "Mathematical Structures in Computer Science"], "B", "Theory")
+_add(["TCS", "Theoretical Computer Science"], "B", "Theory")
+
+# --- Graphics/MM ---
+_add(["TOMM", "ACM Transactions on Multimedia Computing,Communications and Applications"], "B", "Graphics/MM")
+_add(["CAGD", "Computer Aided Geometric Design"], "B", "Graphics/MM")
+_add(["CGF", "Computer Graphics Forum"], "B", "Graphics/MM")
+_add(["CAD", "Computer-Aided Design"], "B", "Graphics/MM")
+_add(["TCSVT", "IEEE Transactions on Circuits and Systems for Video Technology"], "B", "Graphics/MM")
+_add(["JASA", "The Journal of the Acoustical Society of America"], "B", "Graphics/MM")
+_add(["SIIMS", "SIAM Journal on Imaging Sciences"], "B", "Graphics/MM")
+_add(["SPECOM", "Speech Communication"], "B", "Graphics/MM")
+_add(["CVMJ", "Computational Visual Media"], "B", "Graphics/MM")
+
+# --- AI ---
+_add(["TAP", "ACM Transactions on Applied Perception"], "B", "AI")
+_add(["AAMAS", "Autonomous Agents and Multi-Agent Systems"], "B", "AI")
+_add(["Computational Linguistics"], "B", "AI")
+_add(["CVIU", "Computer Vision and Image Understanding"], "B", "AI")
+_add(["DKE", "Data & Knowledge Engineering"], "B", "AI")
+_add(["Evolutionary Computation"], "B", "AI")
+_add(["TAC", "IEEE Transactions on Affective Computing"], "B", "AI")
+_add(["TASLP", "IEEE/ACM Transactions on Audio, Speech and Language Processing"], "B", "AI")
+_add(["IEEE Transactions on Cybernetics"], "B", "AI")
+_add(["TEC", "IEEE Transactions on Evolutionary Computation"], "B", "AI")
+_add(["TFS", "IEEE Transactions on Fuzzy Systems"], "B", "AI")
+_add(["TNNLS", "IEEE Transactions on Neural Networks and learning systems"], "B", "AI")
+_add(["IJAR", "International Journal of Approximate Reasoning"], "B", "AI")
+_add(["JAIR", "Journal of Artificial Intelligence Research"], "B", "AI")
+_add(["Journal of Automated Reasoning"], "B", "AI")
+_add(["JSLHR", "Journal of Speech, Language, and Hearing Research"], "B", "AI")
+_add(["Machine Learning"], "B", "AI")
+_add(["Neural Computation"], "B", "AI")
+_add(["Neural Networks"], "B", "AI")
+_add(["PR", "Pattern Recognition"], "B", "AI")
+_add(["TACL", "Transactions of the Association for Computational Linguistics"], "B", "AI")
+
+# --- HCI ---
+_add(["CSCW", "Computer Supported Cooperative Work"], "B", "HCI")
+_add(["HCI", "Human-Computer Interaction"], "B", "HCI")
+_add(["IEEE Transactions on Human-Machine Systems"], "B", "HCI")
+_add(["IWC", "Interacting with Computers"], "B", "HCI")
+_add(["IJHCI", "International Journal of Human-Computer Interaction"], "B", "HCI")
+_add(["UMUAI", "User Modeling and User-Adapted Interaction"], "B", "HCI")
+_add(["TSMC", "IEEE Transactions on Systems, Man, and Cybernetics: Systems"], "B", "HCI")
+_add(["CCF TPCI", "CCF Transactions on Pervasive Computing and Interaction"], "B", "HCI")
+
+# --- Interdisciplinary ---
+_add(["Briefings in Bioinformatics"], "B", "Interdisciplinary")
+_add(["Cognition", "Cognition"], "B", "Interdisciplinary")
+_add(["TASAE", "IEEE Transactions on Automation Science and Engineering"], "B", "Interdisciplinary")
+_add(["TGARS", "IEEE Transactions on Geoscience and Remote Sensing"], "B", "Interdisciplinary")
+_add(["TITS", "IEEE Transactions on Intelligent Transportation Systems"], "B", "Interdisciplinary")
+_add(["TMI", "IEEE Transactions on Medical Imaging"], "B", "Interdisciplinary")
+_add(["TR", "IEEE Transactions on Robotics"], "B", "Interdisciplinary")
+_add(["TCBB", "IEEE-ACM Transactions on Computational Biology and Bioinformatics"], "B", "Interdisciplinary")
+_add(["JCST", "Journal of Computer Science and Technology"], "B", "Interdisciplinary")
+_add(["JAMIA", "Journal of the American Medical Informatics Association"], "B", "Interdisciplinary")
+_add(["PLOS Computational Biology"], "B", "Interdisciplinary")
+_add(["The Computer Journal"], "B", "Interdisciplinary")
+_add(["WWW", "World Wide Web"], "B", "Interdisciplinary")
+_add(["FCS", "Frontiers of Computer Science"], "B", "Interdisciplinary")
+_add(["BCRA", "Blockchain: Research and Applications"], "B", "Interdisciplinary")
+
+
+# ==================== CCF-C Journals ====================
+# --- Arch/HPC/Storage ---
+_add(["JETC", "ACM Journal on Emerging Technologies in Computing Systems"], "C", "Arch/HPC/Storage")
+_add(["Concurrency and Computation: Practice and Experience"], "C", "Arch/HPC/Storage")
+_add(["DC", "Distributed Computing"], "C", "Arch/HPC/Storage")
+_add(["FGCS", "Future Generation Computer Systems"], "C", "Arch/HPC/Storage")
+_add(["Integration", "Integration, the VLSI Journal"], "C", "Arch/HPC/Storage")
+_add(["JETTA", "Journal of Electronic Testing-Theory and Applications"], "C", "Arch/HPC/Storage")
+_add(["JGC", "The Journal of Grid computing"], "C", "Arch/HPC/Storage")
+_add(["RTS", "Real-Time Systems"], "C", "Arch/HPC/Storage")
+_add(["TJSC", "The Journal of Supercomputing"], "C", "Arch/HPC/Storage")
+_add(["TCASI", "IEEE Transactions on Circuits and Systems I: Regular Papers"], "C", "Arch/HPC/Storage")
+_add(["CCF-THPC", "CCF Transactions on High Performance Computing"], "C", "Arch/HPC/Storage")
+_add(["TSUSC", "IEEE Transactions on Sustainable Computing"], "C", "Arch/HPC/Storage")
+
+# --- Network ---
+_add(["Ad hoc Networks"], "C", "Network")
+_add(["CC", "Computer Communications"], "C", "Network")
+_add(["TNSM", "IEEE Transactions on Network and Service Management"], "C", "Network")
+_add(["IET Communications"], "C", "Network")
+_add(["JNCA", "Journal of Network and Computer Applications"], "C", "Network")
+_add(["MONET", "Mobile Networks and Applications"], "C", "Network")
+_add(["Networks"], "C", "Network")
+_add(["PPNA", "Peer-to-Peer Networking and Applications"], "C", "Network")
+_add(["WCMC", "Wireless Communications and Mobile Computing"], "C", "Network")
+_add(["Wireless Networks"], "C", "Network")
+_add(["IOT", "IEEE Internet of Things Journal"], "C", "Network")
+_add(["TIOT", "ACM Transactions on Internet of Things"], "C", "Network")
+
+# --- Security ---
+_add(["CLSR", "Computer Law & Security Review"], "C", "Security")
+_add(["EURASIP Journal on Information Security"], "C", "Security")
+_add(["IET Information Security"], "C", "Security")
+_add(["IMCS", "Information and Computer Security"], "C", "Security")
+_add(["IJICS", "International Journal of Information and Computer Security"], "C", "Security")
+_add(["IJISP", "International Journal of Information Security and Privacy"], "C", "Security")
+_add(["JISA", "Journal of Information Security and Applications"], "C", "Security")
+_add(["SCN", "Security and Communication Networks"], "C", "Security")
+_add(["HCC", "High-Confidence Computing"], "C", "Security")
+
+# --- SE/PL ---
+_add(["CL", "Computer Languages, Systems and Structures"], "C", "SE/PL")
+_add(["IJSEKE", "International Journal of Software Engineering and Knowledge Engineering"], "C", "SE/PL")
+_add(["STTT", "International Journal of Software Tools for Technology Transfer"], "C", "SE/PL")
+_add(["JLAMP", "Journal of Logical and Algebraic Methods in Programming"], "C", "SE/PL")
+_add(["JWE", "Journal of Web Engineering"], "C", "SE/PL")
+_add(["SOCA", "Service Oriented Computing and Applications"], "C", "SE/PL")
+_add(["SQJ", "Software Quality Journal"], "C", "SE/PL")
+_add(["TPLP", "Theory and Practice of Logic Programming"], "C", "SE/PL")
+_add(["PACM PL", "Proceedings of the ACM on Programming Languages"], "C", "SE/PL")
+
+# --- DB/DM/IR ---
+_add(["DPD", "Distributed and Parallel Databases"], "C", "DB/DM/IR")
+_add(["I&M", "Information & Management"], "C", "DB/DM/IR")
+_add(["IPL", "Information Processing Letters"], "C", "DB/DM/IR")
+_add(["IR", "Information Retrieval Journal"], "C", "DB/DM/IR")
+_add(["IJCIS", "International Journal of Cooperative Information Systems"], "C", "DB/DM/IR")
+_add(["IJGIS", "International Journal of Geographical Information Science"], "C", "DB/DM/IR")
+_add(["IJIS", "International Journal of Intelligent Systems"], "C", "DB/DM/IR")
+_add(["IJKM", "International Journal of Knowledge Management"], "C", "DB/DM/IR")
+_add(["IJSWIS", "International Journal on Semantic Web and Information Systems"], "C", "DB/DM/IR")
+_add(["JCIS", "Journal of Computer Information Systems"], "C", "DB/DM/IR")
+_add(["JDM", "Journal of Database Management"], "C", "DB/DM/IR")
+_add(["JGITM", "Journal of Global Information Technology Management"], "C", "DB/DM/IR")
+_add(["JIIS", "Journal of Intelligent Information Systems"], "C", "DB/DM/IR")
+_add(["JSIS", "The Journal of Strategic Information Systems"], "C", "DB/DM/IR")
+_add(["TIST", "ACM Transactions on Intelligent Systems and Technology"], "C", "DB/DM/IR")
+_add(["TORS", "ACM Transactions on Recommender Systems"], "C", "DB/DM/IR")
+
+# --- Theory ---
+_add(["ACTA", "Acta Informatica"], "C", "Theory")
+_add(["APAL", "Annals of Pure and Applied Logic"], "C", "Theory")
+_add(["DAM", "Discrete Applied Mathematics"], "C", "Theory")
+_add(["FUIN", "Fundamenta Informaticae"], "C", "Theory")
+_add(["IPL", "Information Processing Letters"], "C", "Theory")
+_add(["JCOMPLEXITY", "Journal of Complexity"], "C", "Theory")
+_add(["LOGCOM", "Journal of Logic and Computation"], "C", "Theory")
+_add(["JSL", "The Journal of Symbolic Logic"], "C", "Theory")
+_add(["LMCS", "Logical Methods in Computer Science"], "C", "Theory")
+_add(["SIDMA", "SIAM Journal on Discrete Mathematics"], "C", "Theory")
+_add(["Theory of Computing Systems"], "C", "Theory")
+_add(["TQC", "ACM Transactions in Quantum Computing"], "C", "Theory")
+
+# --- Graphics/MM ---
+_add(["CGTA", "Computational Geometry: Theory and Applications"], "C", "Graphics/MM")
+_add(["CAVW", "computer animation & virtual worlds"], "C", "Graphics/MM")
+_add(["C&G", "Computers & Graphics"], "C", "Graphics/MM")
+_add(["DCG", "Discrete & Computational Geometry"], "C", "Graphics/MM")
+_add(["SPL", "IEEE Signal Processing Letters"], "C", "Graphics/MM")
+_add(["IET-IPR", "IET Image Processing"], "C", "Graphics/MM")
+_add(["JVCIR", "Journal of Visual Communication and Image Representation"], "C", "Graphics/MM")
+_add(["MS", "Multimedia Systems"], "C", "Graphics/MM")
+_add(["MTA", "Multimedia Tools and Applications"], "C", "Graphics/MM")
+_add(["SIGPRO", "Signal Processing"], "C", "Graphics/MM")
+_add(["IMAGE", "Signal Processing: Image Communication"], "C", "Graphics/MM")
+_add(["TVC", "The Visual Computer"], "C", "Graphics/MM")
+_add(["VI", "Visual Informatics"], "C", "Graphics/MM")
+_add(["VRIH", "Virtual Reality & Intelligent Hardware"], "C", "Graphics/MM")
+_add(["GMOD", "Graphical Models"], "C", "Graphics/MM")
+
+# --- AI ---
+_add(["TALLIP", "ACM Transactions on Asian and Low-Resource Language Information Processing"], "C", "AI")
+_add(["Applied Intelligence"], "C", "AI")
+_add(["AIM", "Artificial Intelligence in Medicine"], "C", "AI")
+_add(["Artificial Life"], "C", "AI")
+_add(["Computational Intelligence"], "C", "AI")
+_add(["Computer Speech & Language"], "C", "AI")
+_add(["Connection Science"], "C", "AI")
+_add(["DSS", "Decision Support Systems"], "C", "AI")
+_add(["EAAI", "Engineering Applications of Artificial Intelligence"], "C", "AI")
+_add(["Expert Systems"], "C", "AI")
+_add(["ESWA", "Expert Systems with Applications"], "C", "AI")
+_add(["Fuzzy Sets and Systems"], "C", "AI")
+_add(["TG", "IEEE Transactions on Games"], "C", "AI")
+_add(["IET-CVI", "IET Computer Vision"], "C", "AI")
+_add(["IET Signal Processing"], "C", "AI")
+_add(["IVC", "Image and Vision Computing"], "C", "AI")
+_add(["IDA", "Intelligent Data Analysis"], "C", "AI")
+_add(["IJCIA", "International Journal of Computational Intelligence and Applications"], "C", "AI")
+_add(["IJIS", "International Journal of Intelligent Systems"], "C", "AI")
+_add(["IJNS", "International Journal of Neural Systems"], "C", "AI")
+_add(["IJPRAI", "International Journal of Pattern Recognition and Artificial Intelligence"], "C", "AI")
+_add(["IJUFKS", "International Journal of Uncertainty,Fuzziness and Knowledge-Based Systems"], "C", "AI")
+_add(["IJDAR", "International Journal on Document Analysis and Recognition"], "C", "AI")
+_add(["JETAI", "Journal of Experimental and Theoretical Artificial Intelligence"], "C", "AI")
+_add(["KBS", "Knowledge-Based Systems"], "C", "AI")
+_add(["Machine Translation"], "C", "AI")
+_add(["Machine Vision and Applications"], "C", "AI")
+_add(["Natural Computing"], "C", "AI")
+_add(["NLE", "Natural Language Engineering"], "C", "AI")
+_add(["NCA", "Neural Computing and Applications"], "C", "AI")
+_add(["NPL", "Neural Processing Letters"], "C", "AI")
+_add(["Neurocomputing"], "C", "AI")
+_add(["PAA", "Pattern Analysis and Applications"], "C", "AI")
+_add(["PRL", "Pattern Recognition Letters"], "C", "AI")
+_add(["Soft Computing"], "C", "AI")
+_add(["WI", "Web Intelligence"], "C", "AI")
+_add(["TIIS", "ACM Transactions on Interactive Intelligent Systems"], "C", "AI")
+_add(["TELO", "ACM Transactions on Evolutionary Learning and Optimization"], "C", "AI")
+_add(["JATS", "ACM Journal on Autonomous Transportation Systems"], "C", "AI")
+
+# --- HCI ---
+_add(["BIT", "Behaviour & Information Technology"], "C", "HCI")
+_add(["PUC", "Personal and Ubiquitous Computing"], "C", "HCI")
+_add(["PMC", "Pervasive and Mobile Computing"], "C", "HCI")
+_add(["PACMHCI", "Proceedings of the ACM on Human-Computer Interaction"], "C", "HCI")
+_add(["THRI", "ACM Transactions on Human-Robot Interaction"], "C", "HCI")
+
+# --- Interdisciplinary ---
+_add(["BMC Bioinformatics"], "C", "Interdisciplinary")
+_add(["Cybernetics and Systems"], "C", "Interdisciplinary")
+_add(["IEEE Geoscience and Remote Sensing Letters"], "C", "Interdisciplinary")
+_add(["JBHI", "IEEE Journal of Biomedical and Health Informatics"], "C", "Interdisciplinary")
+_add(["TBD", "IEEE Transactions on Big Data"], "C", "Interdisciplinary")
+_add(["IET Intelligent Transport Systems"], "C", "Interdisciplinary")
+_add(["JBI", "Journal of Biomedical Informatics"], "C", "Interdisciplinary")
+_add(["Medical Image Analysis"], "C", "Interdisciplinary")
+_add(["TII", "IEEE Transactions on Industrial Informatics"], "C", "Interdisciplinary")
+_add(["TCPS", "ACM Transactions on Cyber-Physical Systems"], "C", "Interdisciplinary")
+_add(["TOCE", "ACM Transactions on Computing Education"], "C", "Interdisciplinary")
+_add(["FITEE", "Frontiers of Information Technology & Electronic Engineering"], "C", "Interdisciplinary")
+_add(["TCSS", "IEEE Transactions on Computational Social Systems"], "C", "Interdisciplinary")
+_add(["IEEE Transactions on Reliability"], "C", "Interdisciplinary")
+_add(["HEALTH", "ACM Transactions on Computing for Healthcare"], "C", "Interdisciplinary")
+_add(["ACM DLT", "ACM Distributed Ledger Technologies: Research and Practice"], "C", "Interdisciplinary")
+
+
+# ==================== Extra aliases (Semantic Scholar) ====================
+_add(["NIPS", "Advances in Neural Information Processing Systems"], "A", "AI")
+_add(["Computer Vision and Pattern Recognition"], "A", "AI")
+_add(["International Conference on Computer Vision"], "A", "AI")
+_add(["Meeting of the Association for Computational Linguistics"], "A", "AI")
+_add(["PVLDB", "Proceedings of the VLDB Endowment"], "A", "DB/DM/IR")
+_add(["Knowledge Discovery and Data Mining"], "A", "DB/DM/IR")
+_add(["SIGMOD Conference", "ACM SIGMOD International Conference on Management of Data"], "A", "DB/DM/IR")
+_add(["ESEC/FSE", "Foundations of Software Engineering"], "A", "SE/PL")
+_add(["Operating Systems Design and Implementation"], "A", "SE/PL")
+_add(["Symposium on Operating Systems Principles"], "A", "SE/PL")
+_add(["ACM SIGCOMM Conference"], "A", "Network")
+_add(["Networked Systems Design and Implementation"], "A", "Network")
+_add(["IEEE S&P"], "A", "Security")
+_add(["Symposium on Theory of Computing"], "A", "Theory")
+_add(["Foundations of Computer Science"], "A", "Theory")
+_add(["ACM SIGGRAPH"], "A", "Graphics/MM")
+_add(["International Joint Conference on Artificial Intelligence", "IJCAI"], "A", "AI")
+_add(["The Web Conference", "World Wide Web Conference"], "A", "HCI")
+_add(["Empirical Methods in Natural Language Processing", "Conference on Empirical Methods in Natural Language Processing", "EMNLP"], "B", "AI")
+_add(["British Machine Vision Conference", "BMVC"], "C", "AI")
+_add(["Asian Conference on Computer Vision", "ACCV"], "C", "AI")
+_add(["Medical Image Computing and Computer Assisted Intervention", "MICCAI"], "B", "Interdisciplinary")
+_add(["Conference on Learning Theory", "COLT"], "B", "AI")
+_add(["Conference on Uncertainty in Artificial Intelligence", "UAI"], "B", "AI")
+_add(["IEEE Trans. Pattern Anal. Mach. Intell."], "A", "AI")
+_add(["Int. J. Comput. Vis."], "A", "AI")
+_add(["J. Mach. Learn. Res."], "A", "AI")
+_add(["Artif. Intell."], "A", "AI")
+_add(["IEEE Trans. Image Process."], "A", "AI")
+_add(["IEEE Transactions on Neural Networks and Learning Systems"], "B", "AI")
+_add(["IEEE Transactions on Cybernetics"], "B", "AI")
+_add(["IEEE/ACM Transactions on Audio, Speech and Language Processing"], "B", "AI")
+_add(["Transactions of the Association for Computational Linguistics"], "B", "AI")
+_add(["International Conference on 3D Vision", "3DV"], "C", "AI")
+
+_add(["Nature Machine Intelligence"], "A", "Interdisciplinary")
+
+def lookup_ccf_rank(venue: str) -> tuple[CCFRank, str] | None:
+    """Look up CCF rank for a venue string.
+    Returns (rank, category) or None if not found."""
+    if not venue:
+        return None
+
+    v = venue.strip()
+    vl = v.lower()
+
+    # Direct match
+    if vl in _CCF_MAP:
+        return _CCF_MAP[vl]
+
+    # Try abbreviation extraction: e.g. "NeurIPS 2024" -> "neurips"
+    first_word = vl.split()[0].rstrip("0123456789'")
+    if first_word and first_word in _CCF_MAP:
+        return _CCF_MAP[first_word]
+
+    # Try matching with year stripped: "CVPR 2023" -> "cvpr"
+    no_year = " ".join(w for w in vl.split() if not w.isdigit() and len(w) > 2)
+    if no_year and no_year in _CCF_MAP:
+        return _CCF_MAP[no_year]
+
+    # Substring containment for longer venue names
+    for key, val in _CCF_MAP.items():
+        if len(key) > 8:  # Only check longer keys to avoid false positives
+            if key in vl or vl in key:
+                return val
+
+    return None
