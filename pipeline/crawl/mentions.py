@@ -153,6 +153,8 @@ async def main():
                 pending_advisor_name=pending_name[:80],
                 pending_school_name=pending_school[:120],
                 source=(rec.get("source") or args.default_source)[:30],
+                external_id=(rec.get("external_id") or "")[:120],
+                mention_type=(rec.get("mention_type") or "general")[:30],
                 source_account=(rec.get("source_account") or args.default_account)[:120],
                 title=rec.get("title", ""),
                 url=url[:500],

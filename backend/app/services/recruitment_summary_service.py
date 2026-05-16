@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -10,7 +11,7 @@ async def import_xhs_recruitment_summary(
     advisor_id: int,
     xhs_summary_json: dict,
     xhs_candidates_jsonl: list[dict],
-) -> None:
+) -> int:
     """
     从XHS爬虫输出导入招生信息
     1. 将候选帖子导入AdvisorMention表
@@ -20,19 +21,48 @@ async def import_xhs_recruitment_summary(
     if not advisor:
         raise ValueError(f"Advisor {advisor_id} not found")
 
+    candidates_by_note_id = {
+        str(candidate.get("note_id") or ""): candidate
+        for candidate in xhs_candidates_jsonl
+        if candidate.get("note_id")
+    }
+    summary_snapshot = _with_self_contained_evidence(xhs_summary_json, candidates_by_note_id)
+
     # 1. 导入原始帖子到AdvisorMention
+    inserted = 0
     for candidate in xhs_candidates_jsonl:
-        # 检查是否已存在（通过url去重）
+        external_id = str(candidate.get("note_id") or "").strip()
         url = candidate.get("url", "")
-        if url:
+        existing = None
+        if external_id:
             stmt = select(AdvisorMention).where(
                 AdvisorMention.advisor_id == advisor_id,
-                AdvisorMention.url == url
+                AdvisorMention.source == "xiaohongshu",
+                AdvisorMention.external_id == external_id,
             )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-            if existing:
-                continue
+            existing = (await db.execute(stmt)).scalar_one_or_none()
+            if not existing and url:
+                legacy_stmt = select(AdvisorMention).where(
+                    AdvisorMention.advisor_id == advisor_id,
+                    AdvisorMention.source == "xiaohongshu",
+                    AdvisorMention.url == url,
+                )
+                existing = (await db.execute(legacy_stmt)).scalar_one_or_none()
+        elif url:
+            stmt = select(AdvisorMention).where(
+                AdvisorMention.advisor_id == advisor_id,
+                AdvisorMention.source == "xiaohongshu",
+                AdvisorMention.external_id == "",
+                AdvisorMention.url == url,
+            )
+            existing = (await db.execute(stmt)).scalar_one_or_none()
+        else:
+            existing = None
+        if existing:
+            if external_id and not existing.external_id:
+                existing.external_id = external_id
+            existing.mention_type = "recruitment"
+            continue
 
         # 解析发布时间
         published_at = None
@@ -49,6 +79,8 @@ async def import_xhs_recruitment_summary(
         mention = AdvisorMention(
             advisor_id=advisor_id,
             source="xiaohongshu",
+            external_id=external_id,
+            mention_type="recruitment",
             source_account=candidate.get("author_name", ""),
             title=candidate.get("title", ""),
             url=url,
@@ -59,13 +91,15 @@ async def import_xhs_recruitment_summary(
             published_at=published_at,
         )
         db.add(mention)
+        inserted += 1
 
     # 2. 更新Advisor的招生摘要
-    advisor.recruitment_summary_json = xhs_summary_json
-    advisor.recruitment_summary_status = xhs_summary_json.get("recruitment_status", "")
+    advisor.recruitment_summary_json = summary_snapshot
+    advisor.recruitment_summary_status = summary_snapshot.get("recruitment_status", "")
     advisor.recruitment_summary_refreshed_at = datetime.now(timezone.utc)
 
     await db.commit()
+    return inserted
 
 
 async def get_recruitment_summary(db: AsyncSession, advisor_id: int) -> dict | None:
@@ -109,27 +143,40 @@ async def get_recruitment_summary(db: AsyncSession, advisor_id: int) -> dict | N
         }
         research_directions.append(direction)
 
-    # 处理 evidence_posts：从 AdvisorMention 表获取完整内容
+    # 处理 evidence_posts。新摘要应自带 content；旧摘要兼容从 AdvisorMention 回填。
     evidence_posts_raw = summary_json.get("source_posts", []) or summary_json.get("evidence_posts", [])
     evidence_posts = []
 
-    # 提取所有 note_id
-    note_ids = [post.get("note_id") for post in evidence_posts_raw if post.get("note_id")]
+    # 旧摘要在迁移前没有把正文快照写进 summary_json，这里只为旧数据兼容回填。
+    note_ids = [
+        post.get("note_id")
+        for post in evidence_posts_raw
+        if post.get("note_id") and not post.get("content")
+    ]
 
     # 批量查询 AdvisorMention 获取完整 snippet
     mention_map = {}
     if note_ids:
         stmt = select(AdvisorMention).where(
             AdvisorMention.advisor_id == advisor_id,
-            AdvisorMention.url.in_([f"https://www.xiaohongshu.com/explore/{nid}" for nid in note_ids])
+            AdvisorMention.external_id.in_(note_ids),
         )
         result = await db.execute(stmt)
         mentions = result.scalars().all()
         for mention in mentions:
-            # 从 URL 提取 note_id
-            if mention.url:
-                note_id = mention.url.split("/")[-1]
-                mention_map[note_id] = mention.snippet or ""
+            mention_map[mention.external_id] = mention.snippet or ""
+        missing_note_ids = [note_id for note_id in note_ids if note_id not in mention_map]
+        if missing_note_ids:
+            legacy_stmt = select(AdvisorMention).where(
+                AdvisorMention.advisor_id == advisor_id,
+                AdvisorMention.url.in_(
+                    [f"https://www.xiaohongshu.com/explore/{nid}" for nid in missing_note_ids]
+                ),
+            )
+            legacy_mentions = (await db.execute(legacy_stmt)).scalars().all()
+            for mention in legacy_mentions:
+                if mention.url:
+                    mention_map[mention.url.split("/")[-1]] = mention.snippet or ""
 
     # 组装 evidence_posts，补充 content 字段
     for post in evidence_posts_raw:
@@ -141,7 +188,7 @@ async def get_recruitment_summary(db: AsyncSession, advisor_id: int) -> dict | N
             "published_at": post.get("published_at"),
             "relation_to_target": post.get("relation_to_target", ""),
             "time_sensitivity": post.get("time_sensitivity", ""),
-            "content": mention_map.get(note_id, ""),  # 从 AdvisorMention 获取完整内容
+            "content": post.get("content") or mention_map.get(note_id, ""),
         }
         evidence_posts.append(evidence_post)
 
@@ -160,3 +207,26 @@ async def get_recruitment_summary(db: AsyncSession, advisor_id: int) -> dict | N
         "cache_status": cache_status,
         "refreshed_at": advisor.recruitment_summary_refreshed_at.isoformat() if advisor.recruitment_summary_refreshed_at else None,
     }
+
+
+def _with_self_contained_evidence(
+    summary_json: dict,
+    candidates_by_note_id: dict[str, dict],
+) -> dict:
+    summary = deepcopy(summary_json)
+    source_posts = summary.get("source_posts")
+    if not isinstance(source_posts, list):
+        return summary
+    enriched_posts = []
+    for post in source_posts:
+        if not isinstance(post, dict):
+            continue
+        enriched = dict(post)
+        note_id = str(enriched.get("note_id") or "")
+        candidate = candidates_by_note_id.get(note_id)
+        if candidate:
+            enriched["content"] = candidate.get("content", "")
+            enriched["author_name"] = candidate.get("author_name", "")
+        enriched_posts.append(enriched)
+    summary["source_posts"] = enriched_posts
+    return summary

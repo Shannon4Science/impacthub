@@ -117,6 +117,32 @@ async def init_db():
             await conn.execute(text("ALTER TABLE advisor_mentions ADD COLUMN pending_school_name VARCHAR(120) DEFAULT ''"))
         except Exception:
             pass
+        try:
+            await conn.execute(text("ALTER TABLE advisor_mentions ADD COLUMN external_id VARCHAR(120) DEFAULT ''"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text("ALTER TABLE advisor_mentions ADD COLUMN mention_type VARCHAR(30) DEFAULT 'general'"))
+        except Exception:
+            pass
+        await conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_advisor_mentions_external
+                ON advisor_mentions(advisor_id, source, external_id)
+                WHERE advisor_id != 0 AND external_id != ''
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_advisor_mentions_url_without_external
+                ON advisor_mentions(advisor_id, source, url)
+                WHERE advisor_id != 0 AND source = 'xiaohongshu' AND external_id = '' AND url != ''
+                """
+            )
+        )
         # advisors: cached recruitment summary imported from XHS pipeline output
         try:
             await conn.execute(text("ALTER TABLE advisors ADD COLUMN recruitment_summary_json JSON DEFAULT NULL"))

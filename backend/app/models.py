@@ -425,6 +425,8 @@ class AdvisorMention(Base):
     pending_advisor_name: Mapped[str] = mapped_column(String(80), default="")
     pending_school_name: Mapped[str] = mapped_column(String(120), default="")
     source: Mapped[str] = mapped_column(String(30))            # wechat / xiaohongshu / zhihu / forum / other
+    external_id: Mapped[str] = mapped_column(String(120), default="")  # stable source id, e.g. XHS note_id
+    mention_type: Mapped[str] = mapped_column(String(30), default="general")  # general / recruitment
     source_account: Mapped[str] = mapped_column(String(120), default="")  # 公众号名 / 小红书账号
     title: Mapped[str] = mapped_column(Text, default="")
     url: Mapped[str] = mapped_column(String(500), default="")
@@ -440,6 +442,25 @@ class AdvisorMention(Base):
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    advisor: Mapped["Advisor"] = relationship()
+
+
+class XhsCrawlRun(Base):
+    """One Xiaohongshu recruitment crawl attempt for a single advisor."""
+    __tablename__ = "xhs_crawl_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    advisor_id: Mapped[int] = mapped_column(ForeignKey("advisors.id"))
+    status: Mapped[str] = mapped_column(String(20), default="searching")  # searching / summarizing / done / failed
+    search_query: Mapped[str] = mapped_column(Text, default="")
+    raw_note_count: Mapped[int] = mapped_column(Integer, default=0)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    mentions_inserted: Mapped[int] = mapped_column(Integer, default=0)
+    summary_updated: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     advisor: Mapped["Advisor"] = relationship()
 

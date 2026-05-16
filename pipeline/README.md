@@ -24,6 +24,7 @@ pipeline/
 │   ├── 06_user_portfolios.py    │   SS JSON → User + papers / GitHub / HF / snapshots
 │   ├── seed_scholars.py         │   (parallel path) bulk-import seed leaderboard users
 │   ├── mentions.py              │   (parallel path) bulk-import advisor 公众号 mentions
+│   ├── xhs_recruitment.py       │   (parallel path) XHS recruitment crawl + summary import
 │   └── README.md                │   detailed per-script LLM/agent map
 │                                └──────────────────────┘
 ├── analyze/                     ┌──── 整合分析层 ────┐  LLM-derived per-User tabs

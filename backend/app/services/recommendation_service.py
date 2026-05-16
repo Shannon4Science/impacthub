@@ -372,8 +372,8 @@ def _recruitment_summary_text(value: dict[str, Any] | None) -> str:
     if status:
         parts.append(f"状态：{status}")
     for key, label in [
-        ("targets", "招生对象"),
-        ("research_directions", "招生方向"),
+        ("positions", "招生对象"),
+        ("directions", "招生方向"),
         ("requirements", "要求"),
         ("application_methods", "申请方式"),
     ]:
