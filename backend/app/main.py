@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
 
 from app.database import init_db
-from app.routers import profile, data, milestones, citations, growth, reports, buzz, ai_summary, stats, trajectory, persona, rankings, career, annual_poem, capability, recruit, advisor
+from app.routers import profile, data, milestones, citations, growth, reports, buzz, ai_summary, stats, trajectory, persona, rankings, career, annual_poem, capability, recruit, advisor, pipeline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -56,6 +56,7 @@ app.include_router(annual_poem.router, prefix="/api", tags=["annual_poem"])
 app.include_router(capability.router, prefix="/api", tags=["capability"])
 app.include_router(recruit.router, prefix="/api", tags=["recruit"])
 app.include_router(advisor.router, prefix="/api", tags=["advisor"])
+app.include_router(pipeline.router, prefix="/api", tags=["pipeline"])
 
 ALLOWED_IMAGE_HOSTS = {"avatars.githubusercontent.com", "github.com", "huggingface.co"}
 
