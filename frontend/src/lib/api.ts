@@ -483,6 +483,28 @@ export interface AdvisorCollegeBrief {
   advisor_count: number;
 }
 
+export interface PipelineStage {
+  id: number;
+  label: string;
+  description: string;
+  expected: number;
+  done: number;
+  missing_examples: string[];
+}
+export interface PipelineStatus {
+  crawl: PipelineStage[];
+  analyze: PipelineStage[];
+}
+
+export interface PipelineDemoAdvisorHit {
+  id: number;
+  name: string;
+  title: string;
+  school: string;
+  college: string;
+  already_linked: boolean;
+}
+
 export interface AdvisorBrief {
   id: number;
   school_id: number;
@@ -1123,6 +1145,16 @@ export const api = {
   },
   getAdvisor(advisorId: number) {
     return request<AdvisorDetail>(`/advisor/advisors/${advisorId}`);
+  },
+  getPipelineStatus() {
+    return request<PipelineStatus>("/pipeline/status");
+  },
+  searchAdvisorForDemo(q: string, opts: { unlinkedOnly?: boolean; limit?: number } = {}) {
+    const sp = new URLSearchParams();
+    if (q) sp.set("q", q);
+    if (opts.unlinkedOnly) sp.set("unlinked_only", "1");
+    if (opts.limit != null) sp.set("limit", String(opts.limit));
+    return request<PipelineDemoAdvisorHit[]>(`/pipeline/demo/search?${sp.toString()}`);
   },
   listAdvisorMentions(advisorId: number) {
     return request<AdvisorMention[]>(`/advisor/advisors/${advisorId}/mentions`);

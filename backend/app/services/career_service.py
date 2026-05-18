@@ -126,11 +126,11 @@ async def _query_llm_with_search(client: httpx.AsyncClient, prompt: str) -> tupl
             f"{LLM_API_BASE}/responses",
             headers={"Authorization": f"Bearer {LLM_API_KEY}"},
             json={
-                "model": LLM_BUZZ_MODEL,
+                # gpt-5-mini supports web_search_preview and runs ~3× faster than
+                # gpt-5 for this structured-extraction task (career timeline).
+                "model": "gpt-5-mini",
                 "tools": [{"type": "web_search_preview"}],
                 "input": prompt,
-                # gpt-5 reasoning + many web_search calls consume lots of tokens
-                # before it produces the final message — match enrich_honors (16k)
                 "max_output_tokens": 16000,
             },
             timeout=300,
