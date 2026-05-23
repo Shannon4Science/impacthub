@@ -48,6 +48,89 @@ class Base(DeclarativeBase):
     pass
 
 
+async def _make_advisor_supervisor_columns_nullable(conn):
+    rows = (await conn.execute(text("PRAGMA table_info(advisors)"))).mappings().all()
+    if not rows:
+        return
+    info = {row["name"]: row for row in rows}
+    if not (
+        info.get("is_doctoral_supervisor", {}).get("notnull")
+        or info.get("is_master_supervisor", {}).get("notnull")
+    ):
+        return
+
+    await conn.execute(text("PRAGMA legacy_alter_table=ON"))
+    await conn.execute(text("ALTER TABLE advisors RENAME TO advisors_old"))
+    await conn.execute(text("""
+        CREATE TABLE advisors (
+            id INTEGER NOT NULL,
+            school_id INTEGER NOT NULL,
+            college_id INTEGER NOT NULL,
+            name VARCHAR(80) NOT NULL,
+            name_en VARCHAR(120) NOT NULL,
+            title VARCHAR(60) NOT NULL,
+            is_doctoral_supervisor BOOLEAN,
+            is_master_supervisor BOOLEAN,
+            homepage_url VARCHAR(500) NOT NULL,
+            email VARCHAR(120) NOT NULL,
+            office VARCHAR(200) NOT NULL,
+            phone VARCHAR(40) NOT NULL,
+            photo_url VARCHAR(500) NOT NULL,
+            research_areas JSON,
+            external_links JSON DEFAULT NULL,
+            bio TEXT NOT NULL,
+            education JSON,
+            honors JSON,
+            recruiting_intent TEXT NOT NULL,
+            grad_quota_master INTEGER NOT NULL,
+            grad_quota_phd INTEGER NOT NULL,
+            accepts_recommended BOOLEAN,
+            semantic_scholar_id VARCHAR(100) NOT NULL,
+            h_index INTEGER NOT NULL,
+            citation_count INTEGER NOT NULL,
+            paper_count INTEGER NOT NULL,
+            impacthub_user_id INTEGER,
+            source_url VARCHAR(500) NOT NULL,
+            raw_html TEXT NOT NULL,
+            crawl_status VARCHAR(20) NOT NULL,
+            crawled_at DATETIME,
+            last_refreshed_at DATETIME,
+            created_at DATETIME NOT NULL,
+            recruitment_summary_json JSON DEFAULT NULL,
+            recruitment_summary_refreshed_at DATETIME DEFAULT NULL,
+            recruitment_summary_status VARCHAR(20) DEFAULT '',
+            PRIMARY KEY (id),
+            UNIQUE (school_id, college_id, name),
+            FOREIGN KEY(school_id) REFERENCES advisor_schools (id),
+            FOREIGN KEY(college_id) REFERENCES advisor_colleges (id)
+        )
+    """))
+    await conn.execute(text("""
+        INSERT INTO advisors (
+            id, school_id, college_id, name, name_en, title,
+            is_doctoral_supervisor, is_master_supervisor,
+            homepage_url, email, office, phone, photo_url,
+            research_areas, external_links, bio, education, honors, recruiting_intent,
+            grad_quota_master, grad_quota_phd, accepts_recommended,
+            semantic_scholar_id, h_index, citation_count, paper_count, impacthub_user_id,
+            source_url, raw_html, crawl_status, crawled_at, last_refreshed_at, created_at,
+            recruitment_summary_json, recruitment_summary_refreshed_at, recruitment_summary_status
+        )
+        SELECT
+            id, school_id, college_id, name, name_en, title,
+            is_doctoral_supervisor, is_master_supervisor,
+            homepage_url, email, office, phone, photo_url,
+            research_areas, external_links, bio, education, honors, recruiting_intent,
+            grad_quota_master, grad_quota_phd, accepts_recommended,
+            semantic_scholar_id, h_index, citation_count, paper_count, impacthub_user_id,
+            source_url, raw_html, crawl_status, crawled_at, last_refreshed_at, created_at,
+            recruitment_summary_json, recruitment_summary_refreshed_at, recruitment_summary_status
+        FROM advisors_old
+    """))
+    await conn.execute(text("DROP TABLE advisors_old"))
+    await conn.execute(text("PRAGMA legacy_alter_table=OFF"))
+
+
 async def init_db():
     # Ensure all ORM models are registered on Base.metadata before create_all().
     # Routers happen to import models during normal app startup, but init_db()
@@ -161,6 +244,11 @@ async def init_db():
             await conn.execute(text("ALTER TABLE advisors ADD COLUMN recruitment_summary_status VARCHAR(20) DEFAULT ''"))
         except Exception:
             pass
+        try:
+            await conn.execute(text("ALTER TABLE advisors ADD COLUMN external_links JSON DEFAULT NULL"))
+        except Exception:
+            pass
+        await _make_advisor_supervisor_columns_nullable(conn)
 
 
 async def get_db():

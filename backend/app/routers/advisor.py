@@ -51,7 +51,7 @@ class AdvisorBrief(BaseModel):
     college_id: int
     name: str
     title: str
-    is_doctoral_supervisor: bool
+    is_doctoral_supervisor: bool | None
     research_areas: list[str] | None
     homepage_url: str
     photo_url: str
@@ -73,15 +73,19 @@ class AdvisorDetail(BaseModel):
     name: str
     name_en: str
     title: str
-    is_doctoral_supervisor: bool
-    is_master_supervisor: bool
+    is_doctoral_supervisor: bool | None
+    is_master_supervisor: bool | None
     homepage_url: str
     email: str
     office: str
     phone: str
     photo_url: str
     research_areas: list[str] | None
+    external_links: list[dict] | None = None
     bio: str
+    education: list[dict] | None = None
+    honors: list[str] | None = None
+    recruiting_intent: str = ""
     impacthub_user_id: int | None
 
 
@@ -341,7 +345,11 @@ async def get_advisor(advisor_id: int, db: AsyncSession = Depends(get_db)):
         phone=advisor.phone,
         photo_url=advisor.photo_url,
         research_areas=advisor.research_areas,
+        external_links=advisor.external_links,
         bio=advisor.bio,
+        education=advisor.education,
+        honors=advisor.honors,
+        recruiting_intent=advisor.recruiting_intent,
         impacthub_user_id=advisor.impacthub_user_id,
     )
 

@@ -511,7 +511,7 @@ export interface AdvisorBrief {
   college_id: number;
   name: string;
   title: string;
-  is_doctoral_supervisor: boolean;
+  is_doctoral_supervisor: boolean | null;
   research_areas: string[] | null;
   homepage_url: string;
   photo_url: string;
@@ -531,15 +531,29 @@ export interface AdvisorDetail {
   name: string;
   name_en: string;
   title: string;
-  is_doctoral_supervisor: boolean;
-  is_master_supervisor: boolean;
+  is_doctoral_supervisor: boolean | null;
+  is_master_supervisor: boolean | null;
   homepage_url: string;
   email: string;
   office: string;
   phone: string;
   photo_url: string;
   research_areas: string[] | null;
+  external_links?: Array<{
+    kind: string;
+    url: string;
+    label?: string;
+    reason?: string;
+  }> | null;
   bio: string;
+  education?: Array<{
+    degree: string;
+    year: number | null;
+    institution: string;
+    advisor: string;
+  }> | null;
+  honors?: string[] | null;
+  recruiting_intent?: string;
   impacthub_user_id: number | null;
 }
 
@@ -792,8 +806,8 @@ export interface RecommendationAdvisor {
   school_name: string;
   college_id: number;
   college_name: string;
-  is_doctoral_supervisor: boolean;
-  is_master_supervisor: boolean;
+  is_doctoral_supervisor: boolean | null;
+  is_master_supervisor: boolean | null;
   research_areas: string[];
   homepage_url: string;
   photo_url: string;

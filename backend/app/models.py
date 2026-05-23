@@ -327,8 +327,8 @@ class Advisor(Base):
     name: Mapped[str] = mapped_column(String(80))
     name_en: Mapped[str] = mapped_column(String(120), default="")
     title: Mapped[str] = mapped_column(String(60), default="")               # 教授 / 副教授 / 讲师 / 研究员 / 副研究员 / 助理研究员
-    is_doctoral_supervisor: Mapped[bool] = mapped_column(Boolean, default=False)  # 博导
-    is_master_supervisor: Mapped[bool] = mapped_column(Boolean, default=False)    # 硕导
+    is_doctoral_supervisor: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)  # 博导
+    is_master_supervisor: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)    # 硕导
 
     # Contact
     homepage_url: Mapped[str] = mapped_column(String(500), default="")
@@ -339,6 +339,7 @@ class Advisor(Base):
 
     # Academic profile
     research_areas: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)  # ["NLP", "对齐"]
+    external_links: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)   # academic/profile links found on homepage
     bio: Mapped[str] = mapped_column(Text, default="")
     education: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)        # parsed timeline
     honors: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)           # 杰青/长江/院士

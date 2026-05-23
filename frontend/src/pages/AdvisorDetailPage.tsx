@@ -5,6 +5,23 @@ import { ArrowLeft, ExternalLink, Mail, MapPin, UserCircle2 } from "lucide-react
 import { RecruitmentSummary } from "@/components/advisor/RecruitmentSummary";
 import { api } from "@/lib/api";
 
+const LINK_KIND_LABELS: Record<string, string> = {
+  personal_homepage: "个人主页",
+  lab: "实验室",
+  google_scholar: "Google Scholar",
+  semantic_scholar: "Semantic Scholar",
+  dblp: "DBLP",
+  orcid: "ORCID",
+  github: "GitHub",
+  huggingface: "Hugging Face",
+  cv: "CV",
+  publications: "论文列表",
+  recruitment: "招生信息",
+  blog: "博客",
+  social: "社交主页",
+  other_academic: "学术链接",
+};
+
 export default function AdvisorDetailPage() {
   const { advisorId } = useParams<{ advisorId: string }>();
   const id = Number(advisorId);
@@ -122,7 +139,63 @@ export default function AdvisorDetailPage() {
               )}
 
               {advisor.bio && (
-                <p className="mt-4 text-sm leading-6 text-gray-700">{advisor.bio}</p>
+                <div className="mt-4 whitespace-pre-line text-sm leading-6 text-gray-700">{advisor.bio}</div>
+              )}
+
+              {advisor.education && advisor.education.length > 0 && (
+                <div className="mt-5">
+                  <h2 className="text-sm font-semibold text-gray-900">教育背景</h2>
+                  <div className="mt-2 space-y-1 text-sm text-gray-700">
+                    {advisor.education.map((item, index) => (
+                      <div key={`${item.institution}-${item.degree}-${index}`}>
+                        {item.year ? `${item.year} · ` : ""}
+                        {[item.institution, item.degree, item.advisor ? `导师：${item.advisor}` : ""]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {advisor.honors && advisor.honors.length > 0 && (
+                <div className="mt-5">
+                  <h2 className="text-sm font-semibold text-gray-900">荣誉与人才项目</h2>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {advisor.honors.map((honor) => (
+                      <span key={honor} className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                        {honor}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {advisor.recruiting_intent && (
+                <div className="mt-5">
+                  <h2 className="text-sm font-semibold text-gray-900">招生信息</h2>
+                  <p className="mt-2 whitespace-pre-line text-sm leading-6 text-gray-700">
+                    {advisor.recruiting_intent}
+                  </p>
+                </div>
+              )}
+
+              {advisor.external_links && advisor.external_links.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {advisor.external_links.map((link) => (
+                    <a
+                      key={`${link.kind}-${link.url}`}
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={link.reason || link.url}
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 hover:border-indigo-200 hover:text-indigo-700"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {link.label || LINK_KIND_LABELS[link.kind] || "学术链接"}
+                    </a>
+                  ))}
+                </div>
               )}
             </div>
           </div>
