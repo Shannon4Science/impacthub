@@ -81,6 +81,75 @@
           "reason": "浙江大学官网学院（系）页面将其列入信息学部；学院官网师资队伍页面直接列出教师。"
         }
       ]
+    },
+    {
+      "school": "复旦大学",
+      "college_index_url": "https://www.fudan.edu.cn/489/list.htm",
+      "colleges": [
+        {
+          "name": "计算与智能创新学院",
+          "url": "https://ai.fudan.edu.cn/",
+          "faculty_list_url": "https://cs.fudan.edu.cn/szdw/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院当前官网“师资队伍-教职工名录”入口为动态/图片化内容，现有通用解析器抽不到姓名，旧域名同属该学院且 szdw/list.htm 能直接抽到部分教师分页。后续应补分页适配以覆盖 list1-list14。"
+        },
+        {
+          "name": "大数据学院",
+          "url": "https://sds.fudan.edu.cn/",
+          "faculty_list_url": "https://sds.fudan.edu.cn/17415/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网导航“师资队伍”下有教授/研究员、副教授/副研究员等入口，覆盖数据科学、机器学习、可视化、计算神经科学等方向。"
+        },
+        {
+          "name": "未来信息创新学院",
+          "url": "https://fit.fudan.edu.cn/",
+          "faculty_list_url": "https://fit.fudan.edu.cn/Data/List/zc",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网“师资队伍”提供按职称、按拼音等教师名录入口，覆盖电子信息、通信、光电、智能信息处理等方向。"
+        },
+        {
+          "name": "微电子学院",
+          "url": "https://sme.fudan.edu.cn/",
+          "faculty_list_url": "https://sme.fudan.edu.cn/apy/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网“师资概况-教师名录-按拼音”可直接列出教师，当前通用解析器可抽取百余名教师。"
+        },
+        {
+          "name": "集成电路与微纳电子创新学院",
+          "url": "https://icmne.fudan.edu.cn/",
+          "faculty_list_url": "https://icmne.fudan.edu.cn/szgk/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网“教师名录”分页列出教师，当前入口可作为第一页种子，后续应补分页适配以覆盖 list2/list3 等页面。"
+        },
+        {
+          "name": "生物医学工程与技术创新学院",
+          "url": "https://bme-college.fudan.edu.cn/",
+          "faculty_list_url": "https://bme-college.fudan.edu.cn/szdw/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网导航“师资团队”直接指向该入口，覆盖医学影像、智能医疗、可穿戴/植入式芯片等交叉方向。"
+        },
+        {
+          "name": "智能机器人与先进制造创新学院",
+          "url": "https://ciram.fudan.edu.cn/",
+          "faculty_list_url": "https://ciram.fudan.edu.cn/cslm/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网导航“师资队伍”指向该入口，覆盖智能机器人、具身智能、先进制造、计算力学与人工智能交叉方向。"
+        },
+        {
+          "name": "智能材料与未来能源创新学院",
+          "url": "https://icome.fudan.edu.cn/",
+          "faculty_list_url": "https://icome.fudan.edu.cn/49292/list.htm",
+          "discipline_category": "工学",
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网“师资队伍-教职员工”列出主聘教师，并有学术带头人等子入口。"
+        },
+        {
+          "name": "人工智能创新与产业研究院",
+          "url": "https://ai3.fudan.edu.cn/",
+          "faculty_list_url": "https://ai3.fudan.edu.cn/yjspy/dsdw.htm",
+          "discipline_category": "工学",
+          "reason": "该单位不是复旦官网院系专业页中的教学学院，但其官网“研究生培养-导师队伍”直接列出 AI for Science、人工智能、智能机器人等方向导师，属于导师数据库需要覆盖的重点招生单位。"
+        }
+      ]
     }
   ]
 }
