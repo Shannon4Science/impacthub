@@ -39,6 +39,7 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--school-id", type=int, help="Limit to one school")
     parser.add_argument("--school-name", help="Limit to one school by exact Chinese name")
+    parser.add_argument("--college", help="Limit by college name LIKE pattern; comma-separated patterns allowed")
     parser.add_argument("--max", type=int, default=0, help="Stop after N colleges (0 = no limit)")
     parser.add_argument("--force", action="store_true", help="Re-crawl targeted colleges even if already crawled")
     args = parser.parse_args()
@@ -57,6 +58,10 @@ async def main():
             stmt = stmt.where(AdvisorCollege.school_id == args.school_id)
         if args.school_name:
             stmt = stmt.join(AdvisorSchool).where(AdvisorSchool.name == args.school_name)
+        if args.college:
+            college_names = [name.strip() for name in args.college.split(",") if name.strip()]
+            if college_names:
+                stmt = stmt.where(or_(*[AdvisorCollege.name.like(f"%{name}%") for name in college_names]))
         if args.max:
             stmt = stmt.limit(args.max)
         colleges = (await db.execute(stmt)).scalars().all()

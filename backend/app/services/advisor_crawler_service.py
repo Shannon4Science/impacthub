@@ -777,12 +777,13 @@ NAVIGATION_BLACKLIST = {
     "研究", "实验", "课程", "导师", "教师", "教授", "教职", "师资",
     "本科", "硕士", "博士", "学生", "学位", "学院", "学部", "学系",
     "尾页", "首页", "末页", "第一页", "工程师", "实验师", "技术专员",
-    "博导", "硕导", "回国前",
+    "博导", "硕导", "回国前", "国际会议",
 }
 
 # A "name-like" anchor: 2-4 Chinese characters, no English/digits, not a nav word
 _NAME_RE = re.compile(r"^[\u4e00-\u9fff·]{2,4}$")
 _ZJU_HOST_RE = re.compile(r"(^|\.)zju\.edu\.cn$", re.I)
+_FUDAN_HOST_RE = re.compile(r"(^|\.)fudan\.edu\.cn$", re.I)
 _TITLE_KEYWORDS = (
     "教授", "副教授", "讲师", "研究员", "副研究员", "助理研究员",
     "特聘教授", "求是", "百人计划", "院士", "博导", "硕导",
@@ -792,6 +793,11 @@ _TITLE_KEYWORDS = (
 def _is_zju_url(url: str) -> bool:
     host = urlparse(url).hostname or ""
     return bool(_ZJU_HOST_RE.search(host))
+
+
+def _is_fudan_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return bool(_FUDAN_HOST_RE.search(host))
 
 
 def _is_name_like(text: str) -> bool:
@@ -1122,6 +1128,130 @@ def _extract_zju_icsr_advisor_profiles(html: str, base_url: str) -> dict[str, di
     return profiles
 
 
+def _title_from_fudan_text(text: str) -> str:
+    m = re.search(
+        r"(浩清特聘教授|青年研究员|青年副研究员|助理教授|教授|副教授|"
+        r"研究员|副研究员|助理研究员|讲师)",
+        text or "",
+    )
+    return m.group(1)[:60] if m else ""
+
+
+def _profile_links_from_fudan_homepage(homepage: str, label: str) -> list[dict[str, str]]:
+    if not homepage:
+        return []
+    return [{
+        "kind": _classify_link_kind(homepage, label),
+        "url": homepage,
+        "label": label[:120],
+        "reason": "复旦教师列表页给出的教师主页链接",
+    }]
+
+
+def _extract_fudan_inline_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract Fudan-specific teacher list layouts.
+
+    Covers:
+    - Webplus article tables used by 大数据学院, where each row already contains
+      a long bio and research directions.
+    - Visual card lists used by AI3.
+    - ASP.NET pic lists used by 未来信息创新学院.
+    """
+    if not html or not _is_fudan_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["nav", "header", "footer", "script", "style", "form"]):
+        tag.decompose()
+
+    profiles: list[dict] = []
+    seen_names: set[str] = set()
+
+    def add_profile(profile: dict) -> None:
+        name = re.sub(r"\s+", "", str(profile.get("name") or ""))
+        if not _is_name_like(name) or name in seen_names:
+            return
+        profile["name"] = name
+        seen_names.add(name)
+        profiles.append(profile)
+
+    for row in soup.select(".wp_articlecontent tr"):
+        h4 = row.find("h4")
+        if not h4:
+            continue
+        name_anchor = h4.find("a")
+        name = re.sub(r"\s+", "", (name_anchor or h4).get_text("", strip=True))
+        if not _is_name_like(name):
+            continue
+        homepage = urljoin(base_url, name_anchor["href"].strip()) if name_anchor and name_anchor.get("href") else ""
+        cells = row.find_all("td")
+        content_cell = cells[-1] if cells else row
+        text = _clean_inline_text(content_cell.get_text(" ", strip=True))
+        if len(text) < 20:
+            continue
+        photo = ""
+        img = row.find("img", src=True)
+        if img:
+            photo = urljoin(base_url, img["src"].strip())
+        research_text = ""
+        m = re.search(r"主要研究方向[:：]\s*(.+?)(?:。|$)", text)
+        if m:
+            research_text = m.group(1)
+        add_profile({
+            "name": name,
+            "title": _title_from_fudan_text(text),
+            "homepage": homepage,
+            "email": _extract_email_regex(text),
+            "photo_url": photo,
+            "research_areas": _split_research_areas(research_text),
+            "external_links": _profile_links_from_fudan_homepage(homepage, "教师主页"),
+            "bio": text[:6000],
+            "raw_html": str(row)[:100000],
+            "source_url": base_url,
+        })
+
+    for li in soup.select("ul.teacher-list li, .teacher-list li"):
+        anchor = li.find("a", href=True)
+        if not anchor:
+            continue
+        name_el = li.select_one(".teacher-name")
+        name = re.sub(r"\s+", "", (name_el or anchor).get_text("", strip=True))
+        if not _is_name_like(name):
+            name = re.sub(r"\s+", "", anchor.get("title", ""))
+        if not _is_name_like(name):
+            continue
+        title_text = _clean_inline_text(li.get_text(" ", strip=True))
+        img = li.find("img", src=True)
+        add_profile({
+            "name": name,
+            "title": _title_from_fudan_text(title_text),
+            "homepage": urljoin(base_url, anchor["href"].strip()),
+            "photo_url": urljoin(base_url, img["src"].strip()) if img else "",
+            "bio": title_text[:6000],
+            "raw_html": str(li)[:100000],
+            "source_url": base_url,
+        })
+
+    for li in soup.select("ul.pic-list li, .pic-list li"):
+        anchors = [a for a in li.find_all("a", href=True) if _is_name_like(a.get_text("", strip=True))]
+        if not anchors:
+            continue
+        anchor = anchors[-1]
+        name = re.sub(r"\s+", "", anchor.get_text("", strip=True))
+        img = li.find("img", src=True)
+        add_profile({
+            "name": name,
+            "title": "",
+            "homepage": urljoin(base_url, anchor["href"].strip()),
+            "photo_url": urljoin(base_url, img["src"].strip()) if img else "",
+            "bio": "",
+            "raw_html": str(li)[:100000],
+            "source_url": base_url,
+        })
+
+    return profiles
+
+
 def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
     """Extract teacher stubs from a 师资 page.
 
@@ -1131,6 +1261,9 @@ def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
         return []
     if _is_zju_icsr_faculty_url(base_url):
         return list(_extract_zju_icsr_advisor_profiles(html, base_url).values())
+    fudan_profiles = _extract_fudan_inline_advisors(html, base_url)
+    if fudan_profiles:
+        return fudan_profiles
 
     soup = BeautifulSoup(html, "lxml")
     # Strip nav/footer to reduce false positives
@@ -1317,13 +1450,18 @@ async def crawl_school_colleges(
             select(AdvisorCollege).where(AdvisorCollege.school_id == school.id)
         )).scalars().all()
         existing_by_name = {c.name: c for c in existing}
+        existing_by_clean_name: dict[str, AdvisorCollege] = {}
+        for existing_college in existing:
+            clean_name = re.sub(r"^\s*>\s*", "", existing_college.name or "").strip()
+            existing_by_clean_name.setdefault(clean_name, existing_college)
 
         colleges_to_crawl: list[AdvisorCollege] = []
         for c in manual_seed["colleges"]:
-            existing_college = existing_by_name.get(c["name"])
+            existing_college = existing_by_name.get(c["name"]) or existing_by_clean_name.get(c["name"])
             if existing_college:
                 old_homepage_url = existing_college.homepage_url
                 old_faculty_list_url = existing_college.faculty_list_url
+                existing_college.name = c["name"]
                 if c.get("english_name"):
                     existing_college.english_name = c["english_name"]
                 if c.get("discipline_category"):
@@ -1526,6 +1664,8 @@ def _find_faculty_sub_links(html: str, base_url: str) -> list[str]:
         text = re.sub(r"[*\u2022\u25cf\[\]【】]", "", text).strip()
         if not text or len(text) > 30:
             continue
+        if text in {"学生内部网", "教师内部网", "会议室预订（内网）", "会议室预订"}:
+            continue
         is_faculty_sub = any(k in text for k in FACULTY_SUB_KEYWORDS)
         is_zju_org_sub = is_zju and any(k in text for k in ZJU_FACULTY_ORG_KEYWORDS)
         if not (is_faculty_sub or is_zju_org_sub):
@@ -1539,6 +1679,150 @@ def _find_faculty_sub_links(html: str, base_url: str) -> list[str]:
         if len(out) >= 20:
             break
     return out
+
+
+def _find_fudan_pagination_links(html: str, base_url: str) -> list[str]:
+    """Find Fudan faculty pagination links.
+
+    Fudan's relevant CS/AI pages use two common patterns:
+    - Webplus: /list.htm, /list2.htm ... with all_pages in the DOM.
+    - ASP.NET MvcPager: /Data/List/apy?page=__page__.
+    """
+    if not html or not _is_fudan_url(base_url):
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    out: list[str] = []
+    seen: set[str] = {base_url}
+
+    def add(url: str) -> None:
+        absolute = urljoin(base_url, url)
+        if absolute in seen:
+            return
+        seen.add(absolute)
+        out.append(absolute)
+
+    for a in soup.select(".wp_paging a[href], .pagination a[href]"):
+        href = a["href"].strip()
+        if href and not href.startswith(("javascript:", "#")):
+            add(href)
+
+    page_count = 0
+    all_pages = soup.select_one("em.all_pages")
+    if all_pages:
+        try:
+            page_count = int(all_pages.get_text("", strip=True))
+        except ValueError:
+            page_count = 0
+    if not page_count:
+        pager = soup.select_one("[data-pagecount][data-urlformat]")
+        if pager:
+            try:
+                page_count = int(pager.get("data-pagecount") or "0")
+            except ValueError:
+                page_count = 0
+            url_format = pager.get("data-urlformat") or ""
+            for page in range(2, min(page_count, 50) + 1):
+                add(url_format.replace("__page__", str(page)))
+    else:
+        parsed = urlparse(base_url)
+        path = parsed.path
+        for page in range(2, min(page_count, 50) + 1):
+            if re.search(r"/list\d*\.htm$", path):
+                page_path = re.sub(r"/list\d*\.htm$", f"/list{page}.htm", path)
+                add(parsed._replace(path=page_path).geturl())
+
+    return out[:80]
+
+
+async def _fetch_fudan_general_query_teachers(
+    client: httpx.AsyncClient,
+    html: str,
+    base_url: str,
+) -> list[dict]:
+    """Fetch dynamic Fudan Webplus teacher lists backed by _wp3services.
+
+    BME currently renders only a placeholder in static HTML and fills the list
+    from this endpoint. Ciram uses the same template family, but its public
+    endpoint currently returns no rows; in that case this returns [].
+    """
+    if not html or not _is_fudan_url(base_url):
+        return []
+    if "_wp3services/generalQuery" not in html and "teacherHome" not in html and "{标题内容}" not in html:
+        return []
+    site_match = re.search(r"sudy-wp-siteId=['\"](\d+)['\"]", html)
+    if not site_match:
+        return []
+    endpoint = urljoin(base_url, "/_wp3services/generalQuery")
+    return_infos = [
+        {"field": "title", "name": "title"},
+        {"field": "exField1", "name": "exField1"},
+        {"field": "exField3", "name": "exField3"},
+        {"field": "exField4", "name": "exField4"},
+        {"field": "exField7", "name": "exField7"},
+        {"field": "exField10", "name": "exField10"},
+        {"field": "phone", "name": "phone"},
+        {"field": "firstLetter", "name": "firstLetter"},
+        {"field": "email", "name": "email"},
+        {"field": "cnUrl", "name": "cnUrl"},
+        {"field": "headerPic", "name": "headerPic"},
+    ]
+    orders = [{"field": "letter", "type": "asc"}]
+    form = {
+        "queryObj": "teacherHome",
+        "siteId": site_match.group(1),
+        "level": "1",
+        "articleType": "1",
+        "pageIndex": "1",
+        "rows": "300",
+        "orders": json.dumps(orders, ensure_ascii=False),
+        "returnInfos": json.dumps(return_infos, ensure_ascii=False),
+        "conditions": json.dumps([{"field": "scope", "value": 0, "judge": "="}], ensure_ascii=False),
+    }
+    resp = await client.post(endpoint, data=form, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
+    if resp.status_code not in (200, 202, 203):
+        return []
+    try:
+        payload = resp.json()
+    except ValueError:
+        return []
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return []
+    advisors: list[dict] = []
+    seen_names: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = re.sub(r"\s+", "", str(row.get("title") or ""))
+        if not _is_name_like(name) or name in seen_names:
+            continue
+        seen_names.add(name)
+        title = str(row.get("exField7") or row.get("exField1") or "")[:60]
+        department = str(row.get("exField3") or row.get("exField4") or "")
+        talent = str(row.get("exField10") or "")
+        email = str(row.get("email") or "")[:120]
+        phone = str(row.get("phone") or "")[:40]
+        homepage = urljoin(base_url, str(row.get("cnUrl") or ""))
+        photo = urljoin(base_url, str(row.get("headerPic") or "")) if row.get("headerPic") else ""
+        bio_parts = [name]
+        if title:
+            bio_parts.append(title)
+        if department:
+            bio_parts.append(department)
+        if talent:
+            bio_parts.append(talent)
+        advisors.append({
+            "name": name,
+            "title": title,
+            "homepage": homepage,
+            "email": email,
+            "phone": phone,
+            "photo_url": photo,
+            "bio": "，".join(bio_parts) + "。",
+            "external_links": _profile_links_from_fudan_homepage(homepage, "教师主页"),
+            "source_url": base_url,
+        })
+    return advisors
 
 
 async def _crawl_one_college_advisors(
@@ -1566,6 +1850,14 @@ async def _crawl_one_college_advisors(
         return 0
 
     advisors = await extract_advisor_list(client, school, college, faculty_url, faculty_html)
+    if _is_fudan_url(faculty_url):
+        dynamic_advisors = await _fetch_fudan_general_query_teachers(client, faculty_html, faculty_url)
+        seen_dynamic_names = {a["name"] for a in advisors}
+        for a in dynamic_advisors:
+            if a["name"] in seen_dynamic_names:
+                continue
+            seen_dynamic_names.add(a["name"])
+            advisors.append(a)
     for advisor in advisors:
         advisor.setdefault("source_url", faculty_url)
         if advisor.get("bio"):
@@ -1590,6 +1882,24 @@ async def _crawl_one_college_advisors(
             seen_names.add(a["name"])
             advisors.append(a)
 
+    # Fudan CS/AI pages often put most teachers on explicit pagination pages.
+    for page_url in _find_fudan_pagination_links(faculty_html, faculty_url):
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        page_html = await fetch_html(client, page_url)
+        if not page_html:
+            continue
+        page_advisors = heuristic_extract_advisors(page_html, page_url)
+        dynamic_page_advisors = await _fetch_fudan_general_query_teachers(client, page_html, page_url)
+        page_advisors.extend(dynamic_page_advisors)
+        for a in page_advisors:
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", page_url)
+            if a.get("bio"):
+                a.setdefault("raw_html", page_html[:100000])
+            seen_names.add(a["name"])
+            advisors.append(a)
+
     if not advisors:
         return 0
 
@@ -1601,7 +1911,11 @@ async def _crawl_one_college_advisors(
     added = 0
     new_advisor_names: list[str] = []
     for a in advisors:
-        is_source_adapter_detail = _is_zju_icsr_faculty_url(a.get("source_url", faculty_url))
+        source_url = a.get("source_url", faculty_url)
+        is_source_adapter_detail = (
+            _is_zju_icsr_faculty_url(source_url)
+            or _is_fudan_url(source_url)
+        )
         existing_advisor = existing_by_name.get(a["name"])
         if existing_advisor:
             if a.get("title"):
@@ -1610,6 +1924,10 @@ async def _crawl_one_college_advisors(
                 existing_advisor.homepage_url = a["homepage"]
             if a.get("email"):
                 existing_advisor.email = str(a["email"])[:120]
+            if a.get("phone"):
+                existing_advisor.phone = str(a["phone"])[:40]
+            if a.get("photo_url"):
+                existing_advisor.photo_url = str(a["photo_url"])[:500]
             if isinstance(a.get("research_areas"), list):
                 existing_advisor.research_areas = [
                     str(area)[:80] for area in a["research_areas"] if str(area).strip()
@@ -1631,13 +1949,15 @@ async def _crawl_one_college_advisors(
             title=a.get("title", ""),
             homepage_url=a.get("homepage", ""),
             email=str(a.get("email", ""))[:120],
+            phone=str(a.get("phone", ""))[:40],
+            photo_url=str(a.get("photo_url", ""))[:500],
             research_areas=[
                 str(area)[:80] for area in a.get("research_areas", []) if str(area).strip()
             ][:10] if isinstance(a.get("research_areas"), list) else [],
             external_links=a.get("external_links")[:30] if isinstance(a.get("external_links"), list) else None,
             bio=str(a.get("bio", ""))[:6000],
             raw_html=str(a.get("raw_html", ""))[:100000],
-            source_url=a.get("source_url", faculty_url),
+            source_url=source_url,
             crawl_status="partial" if is_source_adapter_detail and a.get("bio") else "detailed" if a.get("bio") else "stub",
             crawled_at=datetime.utcnow(),
         ))
@@ -1808,6 +2128,19 @@ def _extract_email_regex(text: str) -> str:
     if m:
         return re.sub(r"\s*(?:\[at\]|【at】)\s*", "@", m.group(0)).replace(" ", "")[:120]
     return ""
+
+
+GENERIC_CONTACT_EMAILS = {
+    "cs_school@fudan.edu.cn",
+    "ciram_dzb@fudan.edu.cn",
+}
+
+
+def _drop_generic_contact_email(email: str) -> str:
+    normalized = (email or "").strip().lower()
+    if normalized in GENERIC_CONTACT_EMAILS:
+        return ""
+    return email
 
 
 _BARE_URL_RE = re.compile(r"https?://[^\s<>'\"，。；;、）)】\]\}]+", re.IGNORECASE)
@@ -2239,7 +2572,11 @@ async def _crawl_zju_icsr_source_detail(
     advisor.title = _str("title", 60) or advisor.title
     advisor.is_doctoral_supervisor = _optional_bool(result.get("is_doctoral_supervisor"))
     advisor.is_master_supervisor = _optional_bool(result.get("is_master_supervisor"))
-    advisor.email = _str("email", 120) or str(profile.get("email") or "")[:120] or advisor.email
+    advisor.email = (
+        _drop_generic_contact_email(_str("email", 120))
+        or _drop_generic_contact_email(str(profile.get("email") or "")[:120])
+        or advisor.email
+    )
     advisor.office = _str("office", 200) or advisor.office
     advisor.phone = _str("phone", 40) or advisor.phone
     advisor.photo_url = _str("photo_url", 500) or advisor.photo_url
@@ -2297,7 +2634,7 @@ async def crawl_advisor_detail(
             return {"ok": False, "error": "; ".join(adapter_errors) or "homepage fetch failed"}
 
         photo_fallback = _extract_first_photo(html, advisor.homepage_url)
-        email_regex = _extract_email_regex(text)
+        email_regex = _drop_generic_contact_email(_extract_email_regex(text))
 
         prompt = ADVISOR_DETAIL_PROMPT.format(
             name=advisor.name,
@@ -2319,7 +2656,7 @@ async def crawl_advisor_detail(
     advisor.title = _str("title", 60) or advisor.title
     advisor.is_doctoral_supervisor = _optional_bool(result.get("is_doctoral_supervisor"))
     advisor.is_master_supervisor = _optional_bool(result.get("is_master_supervisor"))
-    advisor.email = _str("email", 120) or email_regex or advisor.email
+    advisor.email = _drop_generic_contact_email(_str("email", 120)) or email_regex or advisor.email
     advisor.office = _str("office", 200) or advisor.office
     advisor.phone = _str("phone", 40) or advisor.phone
     advisor.photo_url = _str("photo_url", 500) or photo_fallback or advisor.photo_url

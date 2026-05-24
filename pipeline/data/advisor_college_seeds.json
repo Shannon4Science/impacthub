@@ -103,9 +103,9 @@
         {
           "name": "未来信息创新学院",
           "url": "https://fit.fudan.edu.cn/",
-          "faculty_list_url": "https://fit.fudan.edu.cn/Data/List/zc",
+          "faculty_list_url": "https://fit.fudan.edu.cn/Data/List/apy",
           "discipline_category": "工学",
-          "reason": "复旦大学官网院系专业页面列出该学院；学院官网“师资队伍”提供按职称、按拼音等教师名录入口，覆盖电子信息、通信、光电、智能信息处理等方向。"
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网“师资队伍-教师名录（按拼音）”提供分页教师名录，覆盖电子信息、通信、光电、智能信息处理等方向。"
         },
         {
           "name": "微电子学院",
