@@ -131,9 +131,9 @@
         {
           "name": "智能机器人与先进制造创新学院",
           "url": "https://ciram.fudan.edu.cn/",
-          "faculty_list_url": "https://ciram.fudan.edu.cn/cslm/list.htm",
+          "faculty_list_url": "https://ciram.fudan.edu.cn/zcdw/list.htm",
           "discipline_category": "工学",
-          "reason": "复旦大学官网院系专业页面列出该学院；学院官网导航“师资队伍”指向该入口，覆盖智能机器人、具身智能、先进制造、计算力学与人工智能交叉方向。"
+          "reason": "复旦大学官网院系专业页面列出该学院；学院官网当前“师资队伍”页为空，组成单位页列出智能机器人研究院、可信具身智能研究院、智慧纳米机器人与纳米系统国际研究院、计算力学与人工智能交叉研究院等入口，03_advisor_stubs 对该学院做站点级聚合适配。"
         },
         {
           "name": "智能材料与未来能源创新学院",

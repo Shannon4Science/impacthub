@@ -1148,6 +1148,14 @@ def _profile_links_from_fudan_homepage(homepage: str, label: str) -> list[dict[s
     }]
 
 
+def _fudan_display_name_to_cn(text: str) -> str:
+    text = re.sub(r"\s+", "", text or "")
+    text = re.sub(r"[*\u2022\u25cf\[\]【】（）()]", "", text)
+    text = re.split(r"[|｜/／]", text, maxsplit=1)[0]
+    text = re.sub(r"^(Prof\.?|Professor|Dr\.?)", "", text, flags=re.I)
+    return text.strip()
+
+
 def _extract_fudan_inline_advisors(html: str, base_url: str) -> list[dict]:
     """Extract Fudan-specific teacher list layouts.
 
@@ -1156,9 +1164,56 @@ def _extract_fudan_inline_advisors(html: str, base_url: str) -> list[dict]:
       a long bio and research directions.
     - Visual card lists used by AI3.
     - ASP.NET pic lists used by 未来信息创新学院.
+    - Composition-unit layouts used by CIRAM-related sites.
     """
     if not html or not _is_fudan_url(base_url):
         return []
+
+    stripped = html.lstrip("\ufeff \t\r\n")
+    if stripped.startswith("{") and '"teachers"' in stripped:
+        try:
+            payload = json.loads(stripped)
+        except ValueError:
+            payload = {}
+        profiles: list[dict] = []
+        seen_names: set[str] = set()
+        for item in payload.get("teachers", []):
+            if not isinstance(item, dict):
+                continue
+            name = _fudan_display_name_to_cn(str(item.get("name") or ""))
+            if not _is_name_like(name) or name in seen_names:
+                continue
+            seen_names.add(name)
+            homepage = str(item.get("homepage") or "").strip()
+            image = str(item.get("image") or "").strip()
+            research_areas = item.get("researchInterests") or []
+            if not isinstance(research_areas, list):
+                research_areas = []
+            information = _clean_inline_text(str(item.get("information") or ""))
+            title = str(item.get("title") or "")[:60]
+            bio = information or "，".join(
+                part for part in [
+                    name,
+                    title,
+                    "、".join(str(area) for area in research_areas if str(area).strip()),
+                ]
+                if part
+            )
+            profiles.append({
+                "name": name,
+                "title": title,
+                "homepage": urljoin(base_url, homepage) if homepage else "",
+                "photo_url": urljoin(base_url, image) if image else "",
+                "research_areas": [
+                    str(area)[:80] for area in research_areas if str(area).strip()
+                ][:10],
+                "external_links": _profile_links_from_fudan_homepage(homepage, "教师主页"),
+                "bio": bio[:6000],
+                "raw_html": json.dumps(item, ensure_ascii=False)[:100000],
+                "source_url": base_url,
+            })
+        if profiles:
+            return profiles
 
     soup = BeautifulSoup(html, "lxml")
     for tag in soup(["nav", "header", "footer", "script", "style", "form"]):
@@ -1210,6 +1265,70 @@ def _extract_fudan_inline_advisors(html: str, base_url: str) -> list[dict]:
             "source_url": base_url,
         })
 
+    for li in soup.select(".person-box li"):
+        anchor = li.find("a", href=True)
+        if not anchor:
+            continue
+        name = _fudan_display_name_to_cn(anchor.get_text("", strip=True))
+        if not _is_name_like(name):
+            continue
+        href = anchor["href"].strip()
+        if href.startswith(("javascript:", "mailto:", "#")):
+            continue
+        add_profile({
+            "name": name,
+            "title": "",
+            "homepage": urljoin(base_url, href),
+            "bio": name,
+            "raw_html": str(li)[:100000],
+            "source_url": base_url,
+        })
+
+    for li in soup.select(".teachlist .item_list.list2 li.item, .item_list.list2 li.item"):
+        anchor = li.find("a", href=True)
+        name_el = li.select_one(".item_title")
+        if not anchor or not name_el:
+            continue
+        name = _fudan_display_name_to_cn(name_el.get_text("", strip=True))
+        if not _is_name_like(name):
+            continue
+        title_el = li.select_one(".sub_title")
+        info_text = _clean_inline_text(li.get_text(" ", strip=True))
+        img = li.find("img", src=True)
+        add_profile({
+            "name": name,
+            "title": _clean_inline_text(title_el.get_text(" ", strip=True))[:60] if title_el else "",
+            "homepage": urljoin(base_url, anchor["href"].strip()),
+            "email": _extract_email_regex(info_text),
+            "office": "",
+            "photo_url": urljoin(base_url, img["src"].strip()) if img else "",
+            "bio": info_text[:6000],
+            "raw_html": str(li)[:100000],
+            "source_url": base_url,
+        })
+
+    for li in soup.select("ul.news_list.list2 li.news, .news_list.list2 li.news"):
+        anchor = li.find("a", href=True)
+        if not anchor:
+            continue
+        label = anchor.get("title") or anchor.get_text("", strip=True)
+        name = _fudan_display_name_to_cn(label)
+        if not _is_name_like(name):
+            continue
+        title = ""
+        path = urlparse(urljoin(base_url, anchor["href"].strip())).path
+        m = re.search(r"/([a-z0-9_]+|js|fjs)_", path, re.I)
+        if m:
+            title = {"js": "教授", "fjs": "副教授"}.get(m.group(1).lower(), "")
+        add_profile({
+            "name": name,
+            "title": title,
+            "homepage": urljoin(base_url, anchor["href"].strip()),
+            "bio": _clean_inline_text(li.get_text(" ", strip=True))[:6000],
+            "raw_html": str(li)[:100000],
+            "source_url": base_url,
+        })
+
     for li in soup.select("ul.teacher-list li, .teacher-list li"):
         anchor = li.find("a", href=True)
         if not anchor:
@@ -1250,6 +1369,19 @@ def _extract_fudan_inline_advisors(html: str, base_url: str) -> list[dict]:
         })
 
     return profiles
+
+
+def _fudan_extra_faculty_urls(base_url: str) -> list[str]:
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    if host != "ciram.fudan.edu.cn":
+        return []
+    return [
+        "https://teai.fudan.edu.cn/config/zh.txt",
+        "https://faet.fudan.edu.cn/23898/list.htm",
+        "https://iiinn.fudan.edu.cn/szdw/list.htm",
+        "https://cmxai.fudan.edu.cn/faculty/list.htm",
+    ]
 
 
 def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
@@ -1899,6 +2031,33 @@ async def _crawl_one_college_advisors(
                 a.setdefault("raw_html", page_html[:100000])
             seen_names.add(a["name"])
             advisors.append(a)
+
+    # CIRAM's own current 师资 page is empty, while its official 组成单位
+    # point to separate public faculty lists. Aggregate those URLs only for
+    # this Fudan site-specific adapter.
+    for extra_url in _fudan_extra_faculty_urls(faculty_url):
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        extra_pages = [(extra_url, extra_html)]
+        for page_url in _find_fudan_pagination_links(extra_html, extra_url):
+            await asyncio.sleep(REQUEST_DELAY_SECONDS)
+            page_html = await fetch_html(client, page_url)
+            if page_html:
+                extra_pages.append((page_url, page_html))
+        for page_url, page_html in extra_pages:
+            page_advisors = heuristic_extract_advisors(page_html, page_url)
+            dynamic_page_advisors = await _fetch_fudan_general_query_teachers(client, page_html, page_url)
+            page_advisors.extend(dynamic_page_advisors)
+            for a in page_advisors:
+                if a["name"] in seen_names:
+                    continue
+                a.setdefault("source_url", page_url)
+                if a.get("bio"):
+                    a.setdefault("raw_html", page_html[:100000])
+                seen_names.add(a["name"])
+                advisors.append(a)
 
     if not advisors:
         return 0
