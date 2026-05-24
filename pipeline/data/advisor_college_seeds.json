@@ -89,9 +89,9 @@
         {
           "name": "计算与智能创新学院",
           "url": "https://ai.fudan.edu.cn/",
-          "faculty_list_url": "https://cs.fudan.edu.cn/szdw/list.htm",
+          "faculty_list_url": "https://ai.fudan.edu.cn/53161/list.htm",
           "discipline_category": "工学",
-          "reason": "复旦大学官网院系专业页面列出该学院；学院当前官网“师资队伍-教职工名录”入口为动态/图片化内容，现有通用解析器抽不到姓名，旧域名同属该学院且 szdw/list.htm 能直接抽到部分教师分页。后续应补分页适配以覆盖 list1-list14。"
+          "reason": "复旦大学官网院系专业页面列出该学院；学院新官网“师资队伍-教职工名录（按职称）”由 Webplus teacherHome 动态接口提供完整教师数据，03_advisor_stubs 对该入口做复旦计算与智能创新学院适配，按学术职称/导师信号保留导师候选，避免行政教职工混入。"
         },
         {
           "name": "大数据学院",

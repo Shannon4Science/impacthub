@@ -53,7 +53,14 @@ def _make_permissive_ssl_context() -> ssl.SSLContext:
 _PERMISSIVE_SSL = _make_permissive_ssl_context()
 
 from app.config import LLM_API_BASE, LLM_API_KEY, LLM_FALLBACK_MODEL
-from app.models import AdvisorSchool, AdvisorCollege, Advisor, AdvisorMention
+from app.models import (
+    AdvisorSchool,
+    AdvisorCollege,
+    Advisor,
+    AdvisorMention,
+    AdvisorEmbeddingMetadata,
+    XhsCrawlRun,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1315,15 +1322,21 @@ def _extract_fudan_inline_advisors(html: str, base_url: str) -> list[dict]:
         name = _fudan_display_name_to_cn(label)
         if not _is_name_like(name):
             continue
+        href_raw = anchor["href"].strip()
+        if href_raw.startswith(("javascript:", "mailto:", "#")) or not href_raw:
+            continue
+        href = urljoin(base_url, href_raw)
+        if _same_page_url(href, base_url):
+            continue
         title = ""
-        path = urlparse(urljoin(base_url, anchor["href"].strip())).path
+        path = urlparse(href).path
         m = re.search(r"/([a-z0-9_]+|js|fjs)_", path, re.I)
         if m:
             title = {"js": "教授", "fjs": "副教授"}.get(m.group(1).lower(), "")
         add_profile({
             "name": name,
             "title": title,
-            "homepage": urljoin(base_url, anchor["href"].strip()),
+            "homepage": href,
             "bio": _clean_inline_text(li.get_text(" ", strip=True))[:6000],
             "raw_html": str(li)[:100000],
             "source_url": base_url,
@@ -1384,6 +1397,28 @@ def _fudan_extra_faculty_urls(base_url: str) -> list[str]:
     ]
 
 
+def _is_fudan_ai_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "ai.fudan.edu.cn" and parsed.path in {
+        "/53161/list.htm",
+        "/szdw/list.htm",
+    }
+
+
+def _is_fudan_ai_academic_teacher(row: dict) -> bool:
+    rank = str(row.get("exField9") or "").strip()
+    title = str(row.get("exField1") or row.get("career") or "").strip()
+    academic_rank = rank in {"院士", "正高", "副高"}
+    academic_title = bool(re.search(r"院士|教授|研究员|讲师|博导|硕导|导师", title))
+    non_academic_title = bool(re.search(r"工程师|实验师|教务|秘书|行政|辅导员|办公室|主管|科研助理|行政助理", title))
+    has_supervisor_signal = bool(re.search(r"博导|硕导|导师|助理研究员|助理教授", title))
+    return (academic_rank or academic_title) and (not non_academic_title or has_supervisor_signal)
+
+
+def _is_authoritative_fudan_advisor_source(url: str) -> bool:
+    return _is_fudan_ai_faculty_url(url)
+
+
 def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
     """Extract teacher stubs from a 师资 page.
 
@@ -1409,9 +1444,11 @@ def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
         href_raw = a["href"].strip()
         if href_raw.startswith(("javascript:", "mailto:", "#")) or not href_raw:
             continue
+        href = urljoin(base_url, href_raw)
+        if _same_page_url(href, base_url):
+            continue
         text = re.sub(r"\s+", "", a.get_text(strip=True))
         text = re.sub(r"[*\u2022\u25cf\[\]【】（）()]", "", text)
-        href = urljoin(base_url, href_raw)
         if not _is_name_like(text) and (is_zju or _is_zju_url(href)):
             text = re.sub(r"\s+", "", a.get("title", ""))
             text = re.sub(r"[*\u2022\u25cf\[\]【】（）()]", "", text)
@@ -1776,6 +1813,16 @@ ZJU_FACULTY_ORG_KEYWORDS = (
 )
 
 
+def _same_page_url(a: str, b: str) -> bool:
+    pa = urlparse(a)
+    pb = urlparse(b)
+    return (
+        (pa.hostname or "").lower() == (pb.hostname or "").lower()
+        and pa.path.rstrip("/") == pb.path.rstrip("/")
+        and (pa.query or "") == (pb.query or "")
+    )
+
+
 def _find_faculty_sub_links(html: str, base_url: str) -> list[str]:
     """When a 师资 page is just a CMS frame, look for sub-listing pages
     (e.g. 教授 / 副教授 / 全部教师) on it."""
@@ -1790,6 +1837,8 @@ def _find_faculty_sub_links(html: str, base_url: str) -> list[str]:
         if href_raw.startswith(("javascript:", "mailto:", "#")) or not href_raw:
             continue
         href = urljoin(base_url, href_raw)
+        if _same_page_url(href, base_url):
+            continue
         if not urlparse(href).path.rstrip("/").endswith("/list.htm"):
             continue
         text = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
@@ -1802,7 +1851,7 @@ def _find_faculty_sub_links(html: str, base_url: str) -> list[str]:
         is_zju_org_sub = is_zju and any(k in text for k in ZJU_FACULTY_ORG_KEYWORDS)
         if not (is_faculty_sub or is_zju_org_sub):
             continue
-        if any(neg in text for neg in ("招聘", "聘任", "公告")):
+        if any(neg in text for neg in ("招聘", "聘任", "公告", "退休")):
             continue
         if href in seen:
             continue
@@ -1879,7 +1928,12 @@ async def _fetch_fudan_general_query_teachers(
     """
     if not html or not _is_fudan_url(base_url):
         return []
-    if "_wp3services/generalQuery" not in html and "teacherHome" not in html and "{标题内容}" not in html:
+    if (
+        not _is_fudan_ai_faculty_url(base_url)
+        and "_wp3services/generalQuery" not in html
+        and "teacherHome" not in html
+        and "{标题内容}" not in html
+    ):
         return []
     site_match = re.search(r"sudy-wp-siteId=['\"](\d+)['\"]", html)
     if not site_match:
@@ -1891,7 +1945,9 @@ async def _fetch_fudan_general_query_teachers(
         {"field": "exField3", "name": "exField3"},
         {"field": "exField4", "name": "exField4"},
         {"field": "exField7", "name": "exField7"},
+        {"field": "exField9", "name": "exField9"},
         {"field": "exField10", "name": "exField10"},
+        {"field": "career", "name": "career"},
         {"field": "phone", "name": "phone"},
         {"field": "firstLetter", "name": "firstLetter"},
         {"field": "email", "name": "email"},
@@ -1922,27 +1978,35 @@ async def _fetch_fudan_general_query_teachers(
         return []
     advisors: list[dict] = []
     seen_names: set[str] = set()
+    is_fudan_ai_faculty = _is_fudan_ai_faculty_url(base_url)
     for row in rows:
         if not isinstance(row, dict):
+            continue
+        if is_fudan_ai_faculty and not _is_fudan_ai_academic_teacher(row):
             continue
         name = re.sub(r"\s+", "", str(row.get("title") or ""))
         if not _is_name_like(name) or name in seen_names:
             continue
         seen_names.add(name)
-        title = str(row.get("exField7") or row.get("exField1") or "")[:60]
+        if is_fudan_ai_faculty:
+            title = str(row.get("exField1") or row.get("exField9") or row.get("career") or "")[:60]
+        else:
+            title = str(row.get("exField7") or row.get("exField1") or row.get("career") or "")[:60]
         department = str(row.get("exField3") or row.get("exField4") or "")
+        if department.strip() in {"无", "暂无"}:
+            department = ""
+        rank = str(row.get("exField9") or "")
         talent = str(row.get("exField10") or "")
+        if talent.strip() in {"无", "暂无"}:
+            talent = ""
         email = str(row.get("email") or "")[:120]
         phone = str(row.get("phone") or "")[:40]
         homepage = urljoin(base_url, str(row.get("cnUrl") or ""))
         photo = urljoin(base_url, str(row.get("headerPic") or "")) if row.get("headerPic") else ""
         bio_parts = [name]
-        if title:
-            bio_parts.append(title)
-        if department:
-            bio_parts.append(department)
-        if talent:
-            bio_parts.append(talent)
+        for part in (title, rank, department, talent):
+            if part and part not in bio_parts:
+                bio_parts.append(part)
         advisors.append({
             "name": name,
             "title": title,
@@ -1999,7 +2063,7 @@ async def _crawl_one_college_advisors(
     # Follow the visible sub-list pages and merge them without deleting existing DB rows.
     seen_names: set[str] = {a["name"] for a in advisors}
     for sub_url in _find_faculty_sub_links(faculty_html, faculty_url):
-        if sub_url == faculty_url:
+        if _same_page_url(sub_url, faculty_url):
             continue
         await asyncio.sleep(REQUEST_DELAY_SECONDS)
         sub_html = await fetch_html(client, sub_url)
@@ -2065,6 +2129,35 @@ async def _crawl_one_college_advisors(
     existing = (await db.execute(
         select(Advisor).where(Advisor.college_id == college.id)
     )).scalars().all()
+    authoritative_sync = _is_authoritative_fudan_advisor_source(faculty_url)
+    if authoritative_sync:
+        current_names = {a["name"] for a in advisors}
+        stale_advisors = [a for a in existing if a.name not in current_names]
+        stale_by_id = {a.id: a for a in stale_advisors}
+        if stale_by_id:
+            stale_ids = list(stale_by_id)
+            stale_mentions = (await db.execute(
+                select(AdvisorMention).where(AdvisorMention.advisor_id.in_(stale_ids))
+            )).scalars().all()
+            for mention in stale_mentions:
+                stale_advisor = stale_by_id.get(mention.advisor_id)
+                if stale_advisor:
+                    mention.pending_advisor_name = mention.pending_advisor_name or stale_advisor.name
+                    mention.pending_school_name = mention.pending_school_name or school.name
+                    mention.advisor_id = 0
+            stale_embeddings = (await db.execute(
+                select(AdvisorEmbeddingMetadata).where(AdvisorEmbeddingMetadata.advisor_id.in_(stale_ids))
+            )).scalars().all()
+            for embedding in stale_embeddings:
+                await db.delete(embedding)
+            stale_xhs_runs = (await db.execute(
+                select(XhsCrawlRun).where(XhsCrawlRun.advisor_id.in_(stale_ids))
+            )).scalars().all()
+            for run in stale_xhs_runs:
+                await db.delete(run)
+            for stale_advisor in stale_advisors:
+                await db.delete(stale_advisor)
+            existing = [a for a in existing if a.name in current_names]
     existing_by_name = {a.name: a for a in existing}
 
     added = 0
@@ -2094,10 +2187,11 @@ async def _crawl_one_college_advisors(
             if isinstance(a.get("external_links"), list):
                 existing_advisor.external_links = a["external_links"][:30] or existing_advisor.external_links
             if a.get("bio"):
-                existing_advisor.bio = str(a["bio"])[:6000]
-                existing_advisor.crawl_status = "partial" if is_source_adapter_detail else "detailed"
-                if a.get("raw_html"):
-                    existing_advisor.raw_html = str(a["raw_html"])[:100000]
+                if not (existing_advisor.crawl_status == "detailed" and is_source_adapter_detail):
+                    existing_advisor.bio = str(a["bio"])[:6000]
+                    existing_advisor.crawl_status = "partial" if is_source_adapter_detail else "detailed"
+                    if a.get("raw_html"):
+                        existing_advisor.raw_html = str(a["raw_html"])[:100000]
             existing_advisor.source_url = a.get("source_url", faculty_url)
             existing_advisor.crawled_at = datetime.utcnow()
             continue
@@ -2122,7 +2216,7 @@ async def _crawl_one_college_advisors(
         ))
         added += 1
         new_advisor_names.append(a["name"])
-    college.advisor_count = (college.advisor_count or 0) + added
+    college.advisor_count = len(existing_by_name) + added if authoritative_sync else (college.advisor_count or 0) + added
     college.advisors_crawled_at = datetime.utcnow()
     await db.flush()
 
