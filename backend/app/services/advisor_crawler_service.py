@@ -926,18 +926,107 @@ def _merge_zju_icsr_profile(profiles: dict[str, dict], profile: dict) -> None:
         existing["email"] = profile["email"]
     if profile.get("title") and not existing.get("title"):
         existing["title"] = profile["title"]
+    if profile.get("homepage") and not existing.get("homepage"):
+        existing["homepage"] = profile["homepage"]
     if profile.get("research_areas") and not existing.get("research_areas"):
         existing["research_areas"] = profile["research_areas"]
+    if profile.get("external_links"):
+        seen = {
+            item.get("url")
+            for item in existing.get("external_links", []) or []
+            if isinstance(item, dict)
+        }
+        merged_links = list(existing.get("external_links", []) or [])
+        for item in profile.get("external_links") or []:
+            if not isinstance(item, dict) or not item.get("url") or item.get("url") in seen:
+                continue
+            merged_links.append(item)
+            seen.add(item["url"])
+        existing["external_links"] = merged_links[:30]
     if len(profile.get("bio", "")) > len(existing.get("bio", "")):
         email = existing.get("email") or profile.get("email", "")
         homepage = existing.get("homepage") or profile.get("homepage", "")
         research_areas = existing.get("research_areas") or profile.get("research_areas") or []
         title = existing.get("title") or profile.get("title", "")
+        external_links = existing.get("external_links") or profile.get("external_links") or []
         existing.update(profile)
         existing["email"] = email
         existing["homepage"] = homepage
         existing["research_areas"] = research_areas
         existing["title"] = title
+        existing["external_links"] = external_links
+
+
+def _extract_zju_icsr_text_links(text: str, base_url: str) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for m in _BARE_URL_RE.finditer(text or ""):
+        raw_url = m.group(0)
+        url = urljoin(base_url, _clean_url_token(raw_url))
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            continue
+        normalized = parsed._replace(fragment="").geturl()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        links.append({
+            "kind": _classify_link_kind(normalized, ""),
+            "url": normalized,
+            "label": "导师简介链接",
+            "reason": "浙大网安教师队伍页面导师简介中给出的链接",
+        })
+    return links
+
+
+def _merge_zju_icsr_long_introductions(
+    profiles: dict[str, dict],
+    soup: BeautifulSoup,
+    base_url: str,
+) -> None:
+    names = sorted(profiles.keys(), key=len, reverse=True)
+    if not names:
+        return
+
+    for td in soup.find_all("td"):
+        text = _clean_inline_text(td.get_text(" ", strip=True))
+        if "导师简介" not in text:
+            continue
+        text = re.sub(r"^导师简介[:：]\s*", "", text).strip()
+        starts: list[tuple[int, str]] = []
+        for name in names:
+            for m in re.finditer(rf"{re.escape(name)}\s*[，,]", text):
+                prefix = text[:m.start()].rstrip()
+                if prefix and prefix[-1] not in "。！？":
+                    continue
+                intro_head = text[m.start():m.start() + 120]
+                if not re.search(r"(教授|研究员|博导|博士生导师|博士|院士|讲席|特聘|百人|青年人才)", intro_head):
+                    continue
+                starts.append((m.start(), name))
+                break
+        starts.sort()
+        for index, (start, name) in enumerate(starts):
+            end = starts[index + 1][0] if index + 1 < len(starts) else len(text)
+            segment = text[start:end].strip()
+            if len(segment) < 80:
+                continue
+            links = _extract_zju_icsr_text_links(segment, base_url)
+            homepage = ""
+            for link in links:
+                if link.get("kind") in {"personal_homepage", "blog", "github", "other_academic"}:
+                    homepage = link["url"]
+                    break
+            _merge_zju_icsr_profile(profiles, {
+                "name": name,
+                "title": _zju_icsr_title_from_text(segment),
+                "homepage": homepage,
+                "email": _extract_email_regex(segment),
+                "research_areas": [],
+                "external_links": links,
+                "bio": segment[:6000],
+                "raw_html": f"<section data-source=\"zju-icsr-long-introduction\">{segment[:100000]}</section>",
+            })
+        return
 
 
 def _extract_zju_icsr_advisor_profiles(html: str, base_url: str) -> dict[str, dict]:
@@ -1026,6 +1115,9 @@ def _extract_zju_icsr_advisor_profiles(html: str, base_url: str) -> dict[str, di
             "bio": text[:6000],
             "raw_html": str(td)[:100000],
         })
+
+    if urlparse(base_url).path.rstrip("/") == "/jsdw/list.htm":
+        _merge_zju_icsr_long_introductions(profiles, soup, base_url)
 
     return profiles
 
@@ -1521,6 +1613,8 @@ async def _crawl_one_college_advisors(
                 existing_advisor.research_areas = [
                     str(area)[:80] for area in a["research_areas"] if str(area).strip()
                 ][:10]
+            if isinstance(a.get("external_links"), list):
+                existing_advisor.external_links = a["external_links"][:30] or existing_advisor.external_links
             if a.get("bio"):
                 existing_advisor.bio = str(a["bio"])[:6000]
                 existing_advisor.crawl_status = "detailed"
@@ -1539,6 +1633,7 @@ async def _crawl_one_college_advisors(
             research_areas=[
                 str(area)[:80] for area in a.get("research_areas", []) if str(area).strip()
             ][:10] if isinstance(a.get("research_areas"), list) else [],
+            external_links=a.get("external_links")[:30] if isinstance(a.get("external_links"), list) else None,
             bio=str(a.get("bio", ""))[:6000],
             raw_html=str(a.get("raw_html", ""))[:100000],
             source_url=a.get("source_url", faculty_url),
@@ -2110,6 +2205,10 @@ async def _crawl_zju_icsr_source_detail(
     areas = profile.get("research_areas")
     if isinstance(areas, list):
         advisor.research_areas = [str(a)[:80] for a in areas if str(a).strip()][:10]
+    if profile.get("homepage"):
+        advisor.homepage_url = str(profile["homepage"])[:500]
+    if isinstance(profile.get("external_links"), list):
+        advisor.external_links = profile["external_links"][:30] or advisor.external_links
     advisor.bio = str(profile.get("bio") or "")[:6000] or advisor.bio
     advisor.raw_html = str(profile.get("raw_html") or html[:100000])[:100000]
     advisor.crawl_status = "detailed" if (advisor.bio or "").strip() else "partial"
