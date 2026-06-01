@@ -21,7 +21,7 @@ import ssl
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import chardet
 import httpx
@@ -52,7 +52,18 @@ def _make_permissive_ssl_context() -> ssl.SSLContext:
 
 _PERMISSIVE_SSL = _make_permissive_ssl_context()
 
-from app.config import LLM_API_BASE, LLM_API_KEY, LLM_FALLBACK_MODEL
+from app.config import (
+    LLM_API_BASE,
+    LLM_API_KEY,
+    LLM_BUZZ_MODEL,
+    LLM_CRAWL_API_BASE,
+    LLM_CRAWL_API_KEY,
+    LLM_CRAWL_MODEL,
+    LLM_CRAWL_PROMPT_PROFILE,
+    LLM_CRAWL_PROVIDER,
+    LLM_CRAWL_THINKING,
+    LLM_FALLBACK_MODEL,
+)
 from app.models import (
     AdvisorSchool,
     AdvisorCollege,
@@ -65,7 +76,7 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 # Use the lighter model for HTML parsing — output is structured, not creative
-CRAWL_MODEL = LLM_FALLBACK_MODEL  # gpt-5-mini
+CRAWL_MODEL = LLM_CRAWL_MODEL  # defaults to LLM_FALLBACK_MODEL
 
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -86,6 +97,7 @@ REQUEST_HEADERS = {
 REQUEST_TIMEOUT = 25.0
 REQUEST_DELAY_SECONDS = 6.0  # politeness pause between scrape requests
 MAX_HTML_TOKENS = 12_000     # rough cap on cleaned HTML fed to LLM
+JINA_READER_PREFIX = "https://r.jina.ai/http://r.jina.ai/http://"
 
 MANUAL_COLLEGE_SEED_PATH = (
     Path(__file__).resolve().parents[3] / "pipeline" / "data" / "advisor_college_seeds.json"
@@ -162,6 +174,18 @@ _META_REFRESH_RE = re.compile(
     re.IGNORECASE,
 )
 
+UESTC_READER_HOSTS = {
+    "icct.uestc.edu.cn",
+    "icse.uestc.edu.cn",
+    "sias.uestc.edu.cn",
+    "sise.uestc.edu.cn",
+    "www.auto.uestc.edu.cn",
+    "www.ese.uestc.edu.cn",
+    "www.iffs.uestc.edu.cn",
+    "www.ncl.uestc.edu.cn",
+    "www.scse.uestc.edu.cn",
+}
+
 
 def _is_zju_person_generic_index_redirect(source_url: str, target_url: str) -> bool:
     source = urlparse(source_url)
@@ -171,6 +195,44 @@ def _is_zju_person_generic_index_redirect(source_url: str, target_url: str) -> b
     if target.netloc.lower() != "person.zju.edu.cn":
         return False
     return source.path.rstrip("/") != "/index" and target.path.rstrip("/") == "/index"
+
+
+def _is_ecnu_sso_login_page(html: str, url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    if not host.endswith("ecnu.edu.cn"):
+        return False
+    return "统一身份认证" in html and (
+        "账号登录" in html
+        or "sso.ecnu.edu.cn/login" in html
+        or "portal1.ecnu.edu.cn/cas/login" in html
+    )
+
+
+def _is_uestc_waf_page(html: str) -> bool:
+    if not html:
+        return False
+    return "$_ts" in html or "Precondition Failed" in html or "访问出错 - 403" in html
+
+
+def _should_try_uestc_reader(url: str) -> bool:
+    return (urlparse(url).hostname or "").lower() in UESTC_READER_HOSTS
+
+
+async def _fetch_with_jina_reader(url: str) -> str | None:
+    reader_url = f"{JINA_READER_PREFIX}{url}"
+    try:
+        async with httpx.AsyncClient(timeout=max(REQUEST_TIMEOUT, 35.0)) as reader_client:
+            resp = await reader_client.get(reader_url, headers=REQUEST_HEADERS, follow_redirects=True)
+        if resp.status_code not in (200, 202, 203):
+            logger.info("jina reader %s → %d", url, resp.status_code)
+            return None
+        text = resp.text
+        if "URL Source:" not in text and "Markdown Content:" not in text:
+            return None
+        return text
+    except (httpx.HTTPError, httpx.TimeoutException) as e:
+        logger.info("jina reader %s failed: %s", url, e)
+        return None
 
 
 async def fetch_html(
@@ -207,6 +269,8 @@ async def fetch_html(
         # Some CN sites return 202 Accepted with the HTML body — treat as success
         if resp.status_code not in (200, 202, 203):
             logger.info("fetch_html %s → %d", url, resp.status_code)
+            if resp.status_code in (403, 412) and _should_try_uestc_reader(url):
+                return await _fetch_with_jina_reader(url)
             return None
         raw = resp.content
         encoding = resp.encoding
@@ -220,6 +284,11 @@ async def fetch_html(
             text = raw.decode(encoding, errors="replace")
         except (LookupError, UnicodeDecodeError):
             text = raw.decode("utf-8", errors="replace")
+
+        if _should_try_uestc_reader(url) and _is_uestc_waf_page(text):
+            reader_text = await _fetch_with_jina_reader(str(resp.url))
+            if reader_text:
+                return reader_text
 
         # Follow JS / meta-refresh redirects (only if page is short enough to be a stub)
         if follow_js_redirect and _depth < 2 and len(text) < 5000:
@@ -240,6 +309,8 @@ async def fetch_html(
         return text
     except (httpx.HTTPError, httpx.TimeoutException) as e:
         logger.info("fetch_html %s failed: %s", url, e)
+        if _should_try_uestc_reader(url):
+            return await _fetch_with_jina_reader(url)
         return None
 
 
@@ -382,12 +453,73 @@ def _parse_json(text: str) -> Any:
     return None
 
 
+def _anthropic_messages_url(base_url: str) -> str:
+    base = (base_url or "").rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/messages"
+    return f"{base}/v1/messages"
+
+
+def _anthropic_thinking_config() -> dict[str, Any] | None:
+    if LLM_CRAWL_THINKING in {"", "off", "false", "0", "none", "disabled"}:
+        return None
+    if LLM_CRAWL_THINKING == "low":
+        return {"type": "enabled", "budget_tokens": 1024}
+    if LLM_CRAWL_THINKING.isdigit():
+        return {"type": "enabled", "budget_tokens": int(LLM_CRAWL_THINKING)}
+    if LLM_CRAWL_THINKING in {"on", "true", "1", "enabled"}:
+        return {"type": "enabled", "budget_tokens": 2048}
+    raise ValueError(f"Unsupported LLM_CRAWL_THINKING={LLM_CRAWL_THINKING!r}")
+
+
+def _extract_anthropic_text(data: dict[str, Any]) -> str:
+    chunks: list[str] = []
+    for item in data.get("content", []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text":
+            chunks.append(str(item.get("text") or ""))
+    return "\n".join(chunks)
+
+
 async def _call_llm(client: httpx.AsyncClient, prompt: str, max_tokens: int = 4000) -> Any:
-    """Chat-completion call with JSON-output expectation."""
+    """Crawler LLM call with JSON-output expectation."""
+    if not LLM_CRAWL_API_KEY:
+        raise RuntimeError("LLM_CRAWL_API_KEY/LLM_API_KEY is empty")
+    if not LLM_CRAWL_API_BASE:
+        raise RuntimeError("LLM_CRAWL_API_BASE/LLM_API_BASE is empty")
+
     try:
+        if LLM_CRAWL_PROVIDER == "anthropic":
+            body: dict[str, Any] = {
+                "model": CRAWL_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+            }
+            thinking = _anthropic_thinking_config()
+            if thinking:
+                body["thinking"] = thinking
+            resp = await client.post(
+                _anthropic_messages_url(LLM_CRAWL_API_BASE),
+                headers={
+                    "x-api-key": LLM_CRAWL_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=body,
+                timeout=120,
+            )
+            if resp.status_code != 200:
+                logger.warning("Crawler LLM %d: %s", resp.status_code, resp.text[:500])
+                return None
+            return _parse_json(_extract_anthropic_text(resp.json()))
+
+        if LLM_CRAWL_PROVIDER != "openai":
+            raise ValueError(f"Unsupported LLM_CRAWL_PROVIDER={LLM_CRAWL_PROVIDER!r}")
+
         resp = await client.post(
-            f"{LLM_API_BASE}/chat/completions",
-            headers={"Authorization": f"Bearer {LLM_API_KEY}"},
+            f"{LLM_CRAWL_API_BASE}/chat/completions",
+            headers={"Authorization": f"Bearer {LLM_CRAWL_API_KEY}"},
             json={
                 "model": CRAWL_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
@@ -784,13 +916,20 @@ NAVIGATION_BLACKLIST = {
     "研究", "实验", "课程", "导师", "教师", "教授", "教职", "师资",
     "本科", "硕士", "博士", "学生", "学位", "学院", "学部", "学系",
     "尾页", "首页", "末页", "第一页", "工程师", "实验师", "技术专员",
-    "博导", "硕导", "回国前", "国际会议",
+    "博导", "硕导", "院士", "正高", "副高", "其他", "院内教员",
+    "回国前", "国际会议", "行政", "学工", "行政办公",
+    "办事指南", "学术报告", "资源分享", "常用资源", "加入我们",
+    "办公系统", "设备系统", "采招系统", "信息公开", "同济大学",
 }
 
 # A "name-like" anchor: 2-4 Chinese characters, no English/digits, not a nav word
 _NAME_RE = re.compile(r"^[\u4e00-\u9fff·]{2,4}$")
 _ZJU_HOST_RE = re.compile(r"(^|\.)zju\.edu\.cn$", re.I)
 _FUDAN_HOST_RE = re.compile(r"(^|\.)fudan\.edu\.cn$", re.I)
+_NJU_HOST_RE = re.compile(r"(^|\.)nju\.edu\.cn$", re.I)
+_USTC_HOST_RE = re.compile(r"(^|\.)ustc\.edu\.cn$", re.I)
+_UESTC_HOST_RE = re.compile(r"(^|\.)uestc\.edu\.cn$", re.I)
+_TONGJI_HOST_RE = re.compile(r"(^|\.)tongji\.edu\.cn$", re.I)
 _TITLE_KEYWORDS = (
     "教授", "副教授", "讲师", "研究员", "副研究员", "助理研究员",
     "特聘教授", "求是", "百人计划", "院士", "博导", "硕导",
@@ -805,6 +944,97 @@ def _is_zju_url(url: str) -> bool:
 def _is_fudan_url(url: str) -> bool:
     host = urlparse(url).hostname or ""
     return bool(_FUDAN_HOST_RE.search(host))
+
+
+def _is_nju_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return bool(_NJU_HOST_RE.search(host))
+
+
+def _is_ustc_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return bool(_USTC_HOST_RE.search(host))
+
+
+def _is_uestc_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return bool(_UESTC_HOST_RE.search(host))
+
+
+def _is_uestc_faculty_portal_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        (parsed.hostname or "").lower() in {"faculty.uestc.edu.cn", "faculty-en.uestc.edu.cn"}
+        and parsed.path.rstrip("/").endswith("/xylb.jsp")
+    )
+
+
+def _is_uestc_faculty_access_denied_page(html: str, url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    if host not in {"faculty.uestc.edu.cn", "faculty-en.uestc.edu.cn"}:
+        return False
+    return "访问出错 - 403" in html or "请通过校园网或VPN" in html
+
+
+def _is_uestc_sise_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "sise.uestc.edu.cn" and "/xygk/szdwq/" in parsed.path
+
+
+def _is_uestc_sias_advisor_list_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "sias.uestc.edu.cn" and "/rcpy/dsjs" in parsed.path
+
+
+def _is_uestc_yjsjy_advisor_list_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        (parsed.hostname or "").lower() == "yjsjy.uestc.edu.cn"
+        and parsed.path.rstrip("/") == "/gmis/jcsjgl/dsfc"
+        and bool(parse_qs(parsed.query).get("yxsh"))
+    )
+
+
+def _is_uestc_official_markdown_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path
+    return (
+        (host == "www.auto.uestc.edu.cn" and path.startswith("/szdw/jsmlzly"))
+        or (host == "www.ese.uestc.edu.cn" and path == "/szdw/jsml.htm")
+        or (host == "icse.uestc.edu.cn" and path == "/szdw/jsmlzl.htm")
+        or (host == "www.ncl.uestc.edu.cn" and path == "/szdw/jsml.htm")
+    )
+
+
+def _is_uestc_icct_advisor_list_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "icct.uestc.edu.cn" and parsed.path.startswith("/rcpy/dsjs")
+
+
+def _is_uestc_scse_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        (parsed.hostname or "").lower() == "www.scse.uestc.edu.cn"
+        and parsed.path.rstrip("/").endswith("/js_sz.jsp")
+    )
+
+
+def _is_uestc_iffs_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        (parsed.hostname or "").lower() == "www.iffs.uestc.edu.cn"
+        and parsed.path == "/szdw/qzj/qb.htm"
+    )
+
+
+def _is_uestc_card_advisor_list_url(url: str) -> bool:
+    return _is_uestc_icct_advisor_list_url(url) or _is_uestc_scse_faculty_url(url)
+
+
+def _is_tongji_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return bool(_TONGJI_HOST_RE.search(host))
 
 
 def _is_name_like(text: str) -> bool:
@@ -1624,6 +1854,994 @@ def _is_authoritative_fudan_advisor_source(url: str) -> bool:
     return _is_fudan_ai_faculty_url(url)
 
 
+def _clean_nju_name(text: str) -> str:
+    text = re.sub(r"\s+", "", text or "")
+    text = re.sub(r"[（(].*?[）)]", "", text)
+    text = re.sub(r"[*\u2022\u25cf\[\]【】]", "", text)
+    return text.strip()
+
+
+def _is_nju_software_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/")
+    return host == "software.nju.edu.cn" and path in {
+        "/szll/szdw/index.html",
+        "/szll/yjsds/index.html",
+    }
+
+
+def _is_nju_ra_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    path = parsed.path.rstrip("/")
+    return host == "ra.nju.edu.cn" and path in {
+        "/szll/zzjs/index.html",
+        "/szll/zzky/index.html",
+    }
+
+
+def _is_nju_ise_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "ise.nju.edu.cn" and parsed.path.rstrip("/") == "/szll/zjzjs.htm"
+
+
+def _is_nju_sme_control_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "sme.nju.edu.cn" and parsed.path.rstrip("/") == "/2031/list.htm"
+
+
+def _extract_nju_ise_advisors(html: str, base_url: str) -> list[dict]:
+    if not html or not _is_nju_ise_faculty_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    root = soup.select_one(".zjzjs")
+    if root is None:
+        return []
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    current_title = ""
+    for child in root.find_all(["p", "table"], recursive=False):
+        if child.name == "p":
+            heading = re.sub(r"\s+", "", child.get_text("", strip=True))
+            if heading in {"教授", "副教授和准聘副教授", "准聘助理教授", "专职科研人员"}:
+                current_title = heading
+            elif heading == "博士后":
+                current_title = ""
+            continue
+        if child.name != "table" or not current_title:
+            continue
+
+        for td in child.find_all("td"):
+            name = _clean_nju_name(td.get_text("", strip=True))
+            if not _is_name_like(name) or name in seen:
+                continue
+            link = td.find("a", href=True)
+            homepage = ""
+            if link:
+                href_raw = link["href"].strip()
+                if href_raw and not href_raw.startswith(("javascript:", "mailto:", "#")):
+                    homepage = urljoin(base_url, href_raw)
+            seen.add(name)
+            advisors.append({
+                "name": name,
+                "title": current_title,
+                "homepage": homepage,
+                "source_url": base_url,
+            })
+
+    return advisors
+
+
+def _extract_nju_sme_control_advisors(html: str, base_url: str) -> list[dict]:
+    if not html or not _is_nju_sme_control_faculty_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    root = soup.select_one("#wp_content_w6_0") or soup.select_one(".wp_articlecontent")
+    if root is None:
+        return []
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    current_title = ""
+    allowed_titles = {"教授", "副教授", "准聘副教授", "准聘助理教授", "研究系列岗"}
+    for tr in root.find_all("tr"):
+        row_text = re.sub(r"\s+", "", tr.get_text("", strip=True))
+        if row_text in allowed_titles:
+            current_title = row_text
+            continue
+        if not current_title:
+            continue
+        for a in tr.find_all("a", href=True):
+            name = _clean_nju_name(a.get("title") or a.get_text("", strip=True))
+            if not _is_name_like(name) or name in seen:
+                continue
+            href_raw = a["href"].strip()
+            if not href_raw or href_raw.startswith(("javascript:", "mailto:", "#")):
+                continue
+            seen.add(name)
+            advisors.append({
+                "name": name,
+                "title": current_title,
+                "homepage": urljoin(base_url, href_raw),
+                "source_url": base_url,
+            })
+
+    return advisors
+
+
+def _extract_nju_boshan_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract NJU Boshan CMS faculty cards/tables."""
+    if not html or not (_is_nju_software_faculty_url(base_url) or _is_nju_ra_faculty_url(base_url)):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    candidates: list[dict] = []
+    seen: set[str] = set()
+    for a in soup.find_all("a", href=True):
+        href_raw = a["href"].strip()
+        if href_raw.startswith(("javascript:", "mailto:", "#")) or not href_raw:
+            continue
+        href = urljoin(base_url, href_raw)
+        if _same_page_url(href, base_url):
+            continue
+
+        name = _clean_nju_name(a.get("title") or a.get_text("", strip=True))
+        if not _is_name_like(name) or name in seen:
+            continue
+
+        title = ""
+        container_text = re.sub(r"\s+", " ", a.get_text(" ", strip=True)).strip()
+        parent = a.find_parent(["li", "td", "div"])
+        if parent:
+            container_text = re.sub(r"\s+", " ", parent.get_text(" ", strip=True)).strip()
+        m = re.search(r"职称[:：]\s*([^。；;\n]+?)(?:\s*研究方向|$)", container_text)
+        if m:
+            title = m.group(1).strip()[:60]
+        elif _is_nju_software_faculty_url(base_url):
+            heading = a.find_previous(class_=re.compile(r"con_title"))
+            if heading:
+                title = re.sub(r"[（(].*", "", heading.get_text(" ", strip=True)).strip()[:60]
+
+        seen.add(name)
+        candidates.append({
+            "name": name,
+            "title": title,
+            "homepage": href,
+        })
+
+    return candidates
+
+
+def _is_nju_is_teacher_home_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "is.nju.edu.cn" and parsed.path in {
+        "/57159/list.htm",
+        "/jxky/list.htm",
+        "/zzky/list.htm",
+        "/xz/list.htm",
+        "/58031/list.htm",
+        "/58032/list.htm",
+        "/zpzljs/list.htm",
+        "/jzjs/list.htm",
+        "/zzky_57987/list.htm",
+        "/zzky_61444/list.htm",
+    }
+
+
+def _is_nju_is_academic_teacher(row: dict) -> bool:
+    title = str(row.get("exField2") or row.get("career") or "")
+    if any(bad in title for bad in ("行政", "博士后", "实验技术")):
+        return False
+    return any(good in title for good in ("教授", "副教授", "研究员", "助理教授", "准聘", "长聘", "专职科研"))
+
+
+USTC_FACULTY_HOSTS = {
+    "cs.ustc.edu.cn",
+    "saids.ustc.edu.cn",
+    "cybersec.ustc.edu.cn",
+    "sme.ustc.edu.cn",
+    "sse.ustc.edu.cn",
+    "eeis.ustc.edu.cn",
+    "auto.ustc.edu.cn",
+}
+
+USTC_TITLE_LABELS = {
+    "院士", "正高", "副高", "教授", "副教授", "讲师", "其他",
+    "教授/研究员", "副教授/副研究员", "特任教授", "特任研究员",
+    "特任副研究员", "指导教师（校内）", "指导教师（校外）",
+    "外聘博导", "兼职教授/博导", "院内教员", "客座兼职教授",
+    "讲师及其他",
+}
+
+
+def _is_ustc_faculty_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    return host in USTC_FACULTY_HOSTS and bool(re.search(r"/list\d*\.htm$", parsed.path.rstrip("/")))
+
+
+def _clean_ustc_name(text: str) -> str:
+    text = re.sub(r"\s+", "", text or "")
+    text = re.sub(r"^[>＞]+", "", text)
+    text = re.sub(r"[（(].*?[）)]", "", text)
+    text = re.sub(r"[*\u2022\u25cf\[\]【】]", "", text)
+    return text.strip()
+
+
+def _extract_ustc_name_from_label(text: str) -> str:
+    compact = _clean_ustc_name(text)
+    title_suffix = r"(副研究员|副教授|特任副研究员|特任研究员|特任教授|助理研究员|研究员|教授|讲师|院士)"
+    stripped_title = re.sub(
+        rf"{title_suffix}$",
+        "",
+        compact,
+    )
+    if stripped_title != compact and _is_name_like(stripped_title):
+        return stripped_title
+    m = re.match(
+        rf"^([\u4e00-\u9fff·]{{2,4}}?)(?:{title_suffix}|主要研究方向|了解详情)",
+        compact,
+    )
+    if m and _is_name_like(m.group(1)):
+        return m.group(1)
+    name = compact
+    if _is_name_like(name):
+        return name
+    spaced = re.sub(r"\s+", " ", text or "").strip(" >＞")
+    m = re.match(
+        rf"^([\u4e00-\u9fff·]{{2,4}}?)\s+(?:{title_suffix}|主要研究方向|了解详情)",
+        spaced,
+    )
+    if m and _is_name_like(m.group(1)):
+        return m.group(1)
+    return ""
+
+
+def _ustc_title_from_label(label: str) -> str:
+    label = re.sub(r"\s+", "", label or "")
+    label = label.strip("：:>＞")
+    if not label:
+        return ""
+    if "院士" in label:
+        return "院士"
+    if "外聘博导" in label or "兼职教授/博导" in label:
+        return "兼职教授/博导"
+    if "教授/研究员" in label:
+        return "教授/研究员"
+    if "副教授/副研究员" in label:
+        return "副教授/副研究员"
+    if "特任副研究员" in label:
+        return "特任副研究员"
+    if "特任研究员" in label:
+        return "特任研究员"
+    if "特任教授" in label:
+        return "特任教授"
+    if "副教授" in label:
+        return "副教授"
+    if "教授" in label:
+        return "教授"
+    if "讲师" in label:
+        return "讲师"
+    if label == "正高":
+        return "正高"
+    if label == "副高":
+        return "副高"
+    if label == "其他":
+        return "其他"
+    if "指导教师" in label:
+        return label[:60]
+    if label == "院内教员":
+        return "院内教员"
+    return ""
+
+
+def _extract_ustc_research_areas(text: str, name: str = "") -> list[str]:
+    text = _clean_inline_text(text)
+    text = re.sub(r"发布时间[:：]?.*$", "", text).strip()
+    for prefix in ("主要研究方向", "研究方向"):
+        m = re.search(rf"{prefix}[:：]\s*(.+)", text)
+        if m:
+            text = m.group(1)
+            break
+    if name:
+        text = re.sub(rf"^\s*\d+\s*{re.escape(name)}\s*", "", text)
+        text = re.sub(rf"^[>＞]\s*{re.escape(name)}\s*", "", text)
+        if name in text:
+            text = text[text.find(name) + len(name):]
+    text = text.replace("了解详情", " ")
+    text = text.strip(" >＞：:，,。；;")
+    if not text or len(text) > 300:
+        return []
+    tokens = [t.strip(" >＞：:，,。；;") for t in re.split(r"\s+", text) if t.strip()]
+    name_like_tokens = [t for t in tokens if _is_name_like(t)]
+    if len(name_like_tokens) >= 2:
+        return []
+    if re.fullmatch(r"\d+", text):
+        return []
+    return [area for area in _split_research_areas(text) if not re.fullmatch(r"\d+", area)]
+
+
+def _extract_ustc_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract USTC Webplus faculty list pages.
+
+    USTC's CS/AI-related sites use several Webplus layouts:
+    - card lists with name/email/research snippets;
+    - plain grouped name lists for cybersec/automation;
+    - paginated category pages like list.htm, list2.htm, ...
+    """
+    if not html or not _is_ustc_faculty_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["nav", "header", "footer", "script", "style", "form"]):
+        tag.decompose()
+
+    current_title = _ustc_title_from_label(soup.title.get_text(" ", strip=True) if soup.title else "")
+    advisors: list[dict] = []
+    seen: set[str] = set()
+
+    def add_anchor(anchor, title: str) -> None:
+        href_raw = (anchor.get("href") or "").strip()
+        if not href_raw or href_raw.startswith(("javascript:", "mailto:", "#")):
+            return
+        href = urljoin(base_url, href_raw)
+        parsed = urlparse(href)
+        if not _is_ustc_url(href) or not parsed.path.endswith("/page.htm"):
+            return
+        label_text = anchor.get("title") or anchor.get_text(" ", strip=True)
+        name = _extract_ustc_name_from_label(label_text)
+        if not _is_name_like(name) or name in seen:
+            return
+
+        container = anchor.find_parent(["li", "div", "td", "tr"])
+        container_text = _clean_inline_text(container.get_text(" ", strip=True)) if container else ""
+        email = _extract_email_regex(container_text)
+        research_areas = _extract_ustc_research_areas(container_text, name)
+        title_from_label = _ustc_title_from_label(label_text)
+        img = container.find("img", src=True) if container else None
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": (title_from_label or title)[:60],
+            "homepage": href,
+            "email": email,
+            "photo_url": urljoin(base_url, img["src"].strip()) if img else "",
+            "research_areas": research_areas,
+            "source_url": base_url,
+        })
+
+    for node in soup.find_all(string=True):
+        text = re.sub(r"\s+", "", str(node or "")).strip()
+        if text in USTC_TITLE_LABELS:
+            current_title = _ustc_title_from_label(text) or current_title
+            continue
+        parent = node.parent
+        if parent is None:
+            continue
+        if parent.name == "a" and parent.get("href"):
+            add_anchor(parent, current_title)
+            continue
+        for anchor in parent.find_all("a", href=True, recursive=False):
+            add_anchor(anchor, current_title)
+
+    # Some card templates wrap the useful anchor deeper than one level below
+    # its text node; do a second pass to catch those without changing titles.
+    page_title = current_title
+    for anchor in soup.find_all("a", href=True):
+        add_anchor(anchor, page_title)
+
+    return advisors
+
+
+def _extract_uestc_vsb_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract UESTC Visual SiteBuilder faculty pages with inline ``var ret`` data."""
+    if not html or not _is_uestc_url(base_url):
+        return []
+    match = re.search(r"var\s+ret\s*=\s*(\[.*?\]);", html, re.S)
+    if not match:
+        return []
+    try:
+        items = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(items, list):
+        return []
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = _clean_inline_text(str(item.get("showTitle") or ""))
+        if not _is_name_like(name) or name in seen:
+            continue
+        fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+        homepage = urljoin(base_url, str(item.get("url") or "").strip())
+        if not homepage or _same_page_url(homepage, base_url):
+            continue
+        title = _clean_inline_text(str(fields.get("zc") or ""))
+        email = _extract_email_regex(str(fields.get("yx") or ""))
+        phone = _clean_inline_text(str(fields.get("dh") or ""))[:40]
+        photo_url = urljoin(base_url, str(item.get("picUrl") or "").strip()) if item.get("picUrl") else ""
+        research_text = _clean_inline_text(str(fields.get("kxyj") or ""))
+        research_text = re.split(r"(?:科研概况|研究课题和项目|科研获奖|发表论文)", research_text, maxsplit=1)[0]
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": title[:60],
+            "homepage": homepage,
+            "email": email,
+            "phone": phone,
+            "photo_url": photo_url,
+            "research_areas": _split_research_areas(research_text[:500]),
+            "source_url": base_url,
+        })
+    return advisors
+
+
+def _is_uestc_faculty_name(text: str) -> bool:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    if _is_name_like(text):
+        return True
+    if "..." in text or "…" in text:
+        return False
+    if not re.fullmatch(r"[A-Za-z][A-Za-z .'\-]{1,60}", text):
+        return False
+    return not any(word in text.lower() for word in ("home", "faculty", "login", "english", "search"))
+
+
+def _looks_like_uestc_faculty_title(text: str) -> bool:
+    return _looks_like_academic_title(text) or any(
+        keyword in (text or "")
+        for keyword in ("工程师", "实验师", "博士后", "研究实习员", "特聘", "博士生导师", "硕士生导师")
+    )
+
+
+def _clean_uestc_faculty_name(text: str) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    text = re.sub(r"^(?:##\s*)+", "", text).strip()
+    return text
+
+
+def _extract_uestc_faculty_portal_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract UESTC's official faculty-homepage college lists.
+
+    These pages live under faculty.uestc.edu.cn/xylb.jsp and are campus/VPN
+    gated in some environments. Keep this parser tightly scoped to that host.
+    """
+    if not html or not _is_uestc_faculty_portal_url(base_url):
+        return []
+    if _is_uestc_faculty_access_denied_page(html, base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["nav", "header", "footer", "script", "style", "form"]):
+        tag.decompose()
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for anchor in soup.find_all("a", href=True):
+        href_raw = (anchor.get("href") or "").strip()
+        if not href_raw or href_raw.startswith(("javascript:", "mailto:", "#")):
+            continue
+        homepage = urljoin(base_url, href_raw)
+        parsed = urlparse(homepage)
+        if (parsed.hostname or "").lower() not in {"faculty.uestc.edu.cn", "faculty-en.uestc.edu.cn"}:
+            continue
+        if "xylb.jsp" in parsed.path or parsed.path.startswith("/system/"):
+            continue
+        if not re.search(r"/(?:zh_CN|en)/(?:index|main)?[^/]*\.htm$", parsed.path):
+            continue
+
+        name = _clean_uestc_faculty_name(anchor.get("title") or anchor.get_text(" ", strip=True))
+        if not _is_uestc_faculty_name(name) or name in seen:
+            continue
+
+        container = anchor.find_parent(["li", "div", "td", "tr"])
+        container_text = _clean_inline_text(container.get_text(" ", strip=True)) if container else ""
+        title = ""
+        if container_text:
+            parts = [
+                part.strip()
+                for part in re.split(r"[\n\r\t ]{2,}|[|｜]", container_text)
+                if part.strip()
+            ]
+            for part in parts:
+                if name in part:
+                    continue
+                if _looks_like_uestc_faculty_title(part):
+                    title = part[:60]
+                    break
+            if not title:
+                after_name = container_text.split(name, 1)[-1].strip()
+                title_match = re.search(
+                    r"(教授(?:（特聘）)?|副教授(?:（特聘）)?|讲师(?:（[^）]+）)?|研究员(?:（特聘）)?|"
+                    r"副研究员(?:（特聘）)?|助理研究员|高级工程师|工程师|实验师|研究实习员)",
+                    after_name,
+                )
+                if title_match:
+                    title = title_match.group(1)[:60]
+
+        img = container.find("img", src=True) if container else None
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": title,
+            "homepage": homepage,
+            "email": _drop_generic_contact_email(_extract_email_regex(container_text)),
+            "photo_url": urljoin(base_url, img["src"].strip()) if img else "",
+            "source_url": base_url,
+        })
+    return advisors
+
+
+def _extract_uestc_sise_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract SISE faculty cards rendered by Jina Reader from official pages."""
+    if not html or (urlparse(base_url).hostname or "").lower() != "sise.uestc.edu.cn":
+        return []
+    if "/xygk/szdwq/" not in urlparse(base_url).path:
+        return []
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    card_re = re.compile(
+        r"\[!\[Image[^\]]*\]\((?P<photo>[^)]*)\)\s*"
+        r"(?P<label>.+?)\]\((?P<url>https://sise\.uestc\.edu\.cn/info/\d+/\d+\.htm)\)",
+        re.S,
+    )
+    for match in card_re.finditer(html):
+        label = _clean_inline_text(match.group("label"))
+        name_match = re.match(
+            r"(?P<name>[\u4e00-\u9fff·]{2,4})\s+职称[:：](?P<title>.+?)(?:\s+研究方向[:：]|$)",
+            label,
+        )
+        if not name_match:
+            continue
+        name = name_match.group("name").strip()
+        if not _is_name_like(name) or name in seen:
+            continue
+        title = _clean_inline_text(name_match.group("title"))[:60]
+        if any(skip in title for skip in ("助教", "辅导员", "管理")):
+            continue
+        area_match = re.search(r"研究方向[:：](?P<areas>.+)$", label)
+        research_areas = _split_research_areas(area_match.group("areas")[:500]) if area_match else []
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": title,
+            "homepage": match.group("url").strip(),
+            "photo_url": match.group("photo").strip(),
+            "research_areas": research_areas,
+            "source_url": base_url,
+        })
+    return advisors
+
+
+def _extract_uestc_sias_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract Shenzhen IAS advisor names from its official advisor-list page.
+
+    The SIAS page is official, but most detail links intentionally point to
+    UESTC's graduate-admissions profile system.
+    """
+    if not html or (urlparse(base_url).hostname or "").lower() != "sias.uestc.edu.cn":
+        return []
+    if "/rcpy/dsjs" not in urlparse(base_url).path:
+        return []
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for match in re.finditer(
+        r"\[(?P<label>\d{4,6}\s*[\u4e00-\u9fff·]{2,4})\]\((?P<url>https://yjsjy\.uestc\.edu\.cn/[^)]+)\)",
+        html,
+    ):
+        label = re.sub(r"\s+", "", match.group("label"))
+        name = re.sub(r"^\d+", "", label)
+        if not _is_name_like(name) or name in seen:
+            continue
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": "",
+            "homepage": match.group("url").strip(),
+            "source_url": base_url,
+        })
+    return advisors
+
+
+def _extract_uestc_yjsjy_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract UESTC graduate-admissions advisor list pages by college id."""
+    if not html or not _is_uestc_yjsjy_advisor_list_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for anchor in soup.find_all("a", href=True):
+        href = anchor["href"].strip()
+        if "/gmis/jcsjgl/dsfc/dsgrjj/" not in href:
+            continue
+        name_node = anchor.find("div")
+        label = name_node.get_text(" ", strip=True) if name_node else anchor.get_text(" ", strip=True)
+        name = _clean_uestc_faculty_name(label)
+        name = re.sub(r"^\d+\s*", "", name).strip()
+        if not _is_uestc_faculty_name(name) or name in seen:
+            continue
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": "",
+            "homepage": urljoin(base_url, href),
+            "source_url": base_url,
+        })
+    return advisors
+
+
+def _normalize_uestc_title_heading(text: str) -> str:
+    text = _clean_inline_text(text)
+    if not text:
+        return ""
+    if "院士" in text:
+        return "院士"
+    if "正高级" in text:
+        return "正高级"
+    if "教授" in text or "研究员" in text:
+        if "副教授" in text or "副研究员" in text:
+            return "副教授/副研究员"
+        return "教授/研究员"
+    if "副高级" in text:
+        return "副高级"
+    if "中级" in text:
+        return "中级"
+    if "讲师" in text or "工程师" in text:
+        return "讲师/工程师"
+    return ""
+
+
+def _extract_uestc_official_markdown_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract UESTC official college/lab teacher directories rendered as Markdown."""
+    if not html or not _is_uestc_official_markdown_faculty_url(base_url):
+        return []
+
+    host = (urlparse(base_url).hostname or "").lower()
+    link_re = re.compile(
+        rf"\[(?P<name>[^\[\]]{{2,80}})\]\((?P<url>https://{re.escape(host)}/info/\d+/\d+\.htm)"
+        r"(?:\s+\"[^\"]*\")?\)"
+    )
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    current_title = ""
+    started = False
+
+    for raw_line in html.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "教师名录" in line or "师资队伍" in line:
+            started = True
+        heading = re.sub(r"^[#*\s]+", "", line).strip()
+        if not link_re.search(line):
+            title = _normalize_uestc_title_heading(heading)
+            if title and host != "www.auto.uestc.edu.cn":
+                current_title = title
+                started = True
+            continue
+        if not started:
+            continue
+
+        for match in link_re.finditer(line):
+            name = _clean_uestc_faculty_name(match.group("name"))
+            name = re.sub(r"^[A-Z]\s*", "", name).strip()
+            if not _is_uestc_faculty_name(name) or name in seen:
+                continue
+            homepage = match.group("url").strip()
+            seen.add(name)
+            advisors.append({
+                "name": name,
+                "title": current_title[:60],
+                "homepage": homepage,
+                "source_url": base_url,
+            })
+    return advisors
+
+
+def _extract_uestc_card_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract UESTC official advisor cards from college/institute pages."""
+    if not html or not _is_uestc_card_advisor_list_url(base_url):
+        return []
+
+    host = (urlparse(base_url).hostname or "").lower()
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    card_re = re.compile(
+        r"\[!\[Image\s+\d+:\s*(?P<img_name>[^\]]+)\]\((?P<photo>[^)]*)\)\s*"
+        r"#+\s*(?P<label>.+?)\s+查看详情\s*>"
+        rf"\]\((?P<url>https?://{re.escape(host)}/info/\d+/\d+\.htm)\)",
+        re.S,
+    )
+    for match in card_re.finditer(html):
+        label = _clean_inline_text(match.group("label"))
+        img_name = _clean_uestc_faculty_name(match.group("img_name"))
+        if label.startswith(img_name):
+            title = label[len(img_name):].strip()
+            name = img_name
+        else:
+            parts = label.split(" ", 1)
+            name = parts[0].strip()
+            title = parts[1].strip() if len(parts) > 1 else ""
+        if not _is_uestc_faculty_name(name) or name in seen:
+            continue
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": title[:60],
+            "homepage": match.group("url").strip(),
+            "photo_url": match.group("photo").strip(),
+            "source_url": base_url,
+        })
+    return advisors
+
+
+def _extract_uestc_iffs_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract UESTC IFFS full-time faculty cards rendered by Jina Reader."""
+    if not html or not _is_uestc_iffs_faculty_url(base_url):
+        return []
+
+    host = (urlparse(base_url).hostname or "").lower()
+    link_re = re.compile(
+        rf"\]\((?P<url>https?://{re.escape(host)}/info/1116/\d+\.htm)\s+\"(?P<name>[^\"]+)\"\)"
+    )
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for raw_line in html.splitlines():
+        if "/info/1116/" not in raw_line:
+            continue
+        match = link_re.search(raw_line)
+        if not match:
+            continue
+        name = _clean_uestc_faculty_name(match.group("name"))
+        if not _is_uestc_faculty_name(name) or name in seen:
+            continue
+
+        title = ""
+        label_match = re.search(r"#+\s*(?P<label>.*?)\]\(", raw_line)
+        if label_match:
+            label = _clean_inline_text(label_match.group("label"))
+            if label.startswith(name):
+                title = label[len(name):].strip()
+            else:
+                title = label
+
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": title[:60],
+            "homepage": match.group("url").strip(),
+            "source_url": base_url,
+        })
+    return advisors
+
+
+TONGJI_FACULTY_HOSTS = {
+    "cs.tongji.edu.cn",
+    "sse.tongji.edu.cn",
+    "see.tongji.edu.cn",
+    "mefaculty.tongji.edu.cn",
+    "celiang.tongji.edu.cn",
+    "iaie.tongji.edu.cn",
+}
+
+TONGJI_TITLE_LABELS = {
+    "教授（研究员）", "教授", "研究员", "副教授（副研究员）",
+    "副教授", "副研究员", "预聘助理教授", "讲师", "讲师（助理教授）",
+    "正高级", "副高级", "中级", "兼职教授", "博士生导师", "硕士生导师",
+}
+
+TONGJI_SKIP_TITLE_LABELS = {
+    "教辅系列", "教辅类教师", "思政管理类教师", "行政教师", "实验教师",
+    "博士后", "荣退荣休教师",
+}
+
+
+def _is_tongji_faculty_url(url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    if host not in TONGJI_FACULTY_HOSTS:
+        return False
+    path = parsed.path.rstrip("/")
+    return (
+        "/szdw" in path
+        or "/Staff/" in path
+        or "/kydw/" in path
+    )
+
+
+def _clean_tongji_name(text: str) -> str:
+    text = re.sub(r"\s+", "", text or "")
+    text = re.sub(r"[（(].*?[）)]", "", text)
+    text = re.sub(r"[*\u2022\u25cf\[\]【】、，,]", "", text)
+    return text.strip()
+
+
+def _tongji_title_from_label(label: str) -> str:
+    label = re.sub(r"\s+", "", label or "")
+    label = label.strip("：:>＞")
+    if not label:
+        return ""
+    if label in TONGJI_SKIP_TITLE_LABELS:
+        return "__skip__"
+    if "博士生导师" in label:
+        return "博士生导师"
+    if "硕士生导师" in label:
+        return "硕士生导师"
+    if "预聘助理教授" in label:
+        return "预聘助理教授"
+    if "讲师" in label or "助理教授" in label:
+        return "讲师（助理教授）" if "助理教授" in label else "讲师"
+    if "兼职教授" in label:
+        return "兼职教授"
+    if "副教授" in label or "副研究员" in label or label == "副高级":
+        return "副教授（副研究员）" if "副研究员" in label else "副教授"
+    if "教授" in label or "研究员" in label or label == "正高级":
+        return "教授（研究员）" if "研究员" in label else "教授"
+    if label == "中级":
+        return "中级"
+    return ""
+
+
+def _is_tongji_teacher_href(href: str, base_url: str) -> bool:
+    parsed = urlparse(href)
+    host = (parsed.hostname or "").lower()
+    base_host = (urlparse(base_url).hostname or "").lower()
+    path = parsed.path.rstrip("/")
+    if _same_page_url(href, base_url):
+        return False
+    if host == "faculty.tongji.edu.cn":
+        return True
+    if host.endswith("tongji.edu.cn") and re.search(r"/info/\d+/\d+\.htm$", path):
+        return True
+    if host.endswith("tongji.edu.cn") and re.search(r"/\d+\.htm$", path) and "/szdw" not in path:
+        return True
+    if base_host == "mefaculty.tongji.edu.cn":
+        return host in {"www.ieee-nrs.org", "people.ucas.edu.cn"}
+    return False
+
+
+def _extract_tongji_advisors(html: str, base_url: str) -> list[dict]:
+    """Extract Tongji CS/AI-related faculty pages.
+
+    Tongji uses several CMS layouts:
+    - CS/SSE grouped name lists by title;
+    - SEE grouped staff pages split by title and A-G/H-N/O-T/U-Z;
+    - mechanical/robotics pages linking to faculty.tongji.edu.cn;
+    - surveying招生导师 pages grouped by doctoral/master supervisor.
+    """
+    if not html or not _is_tongji_faculty_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    for tag in soup(["nav", "header", "footer", "script", "style", "form"]):
+        tag.decompose()
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    current_title = _tongji_title_from_label(soup.title.get_text(" ", strip=True) if soup.title else "")
+    if current_title == "__skip__":
+        current_title = ""
+
+    def add_anchor(anchor, title: str) -> None:
+        href_raw = (anchor.get("href") or "").strip()
+        if not href_raw or href_raw.startswith(("javascript:", "mailto:", "#")):
+            return
+        href = urljoin(base_url, href_raw)
+        if not _is_tongji_teacher_href(href, base_url):
+            return
+        label_text = anchor.get("title") or anchor.get_text(" ", strip=True)
+        name = _clean_tongji_name(label_text)
+        if not _is_name_like(name) or name in seen:
+            return
+        container = anchor.find_parent(["li", "div", "td", "tr", "p"])
+        container_text = _clean_inline_text(container.get_text(" ", strip=True)) if container else ""
+        email = _extract_email_regex(container_text)
+        img = container.find("img", src=True) if container else None
+        title_from_context = _tongji_title_from_label(container_text)
+        if title_from_context == "__skip__":
+            return
+        final_title = (title_from_context or title or "")[:60]
+        base_host = (urlparse(base_url).hostname or "").lower()
+        if not final_title and base_host in {
+            "cs.tongji.edu.cn",
+            "sse.tongji.edu.cn",
+            "see.tongji.edu.cn",
+            "mefaculty.tongji.edu.cn",
+            "celiang.tongji.edu.cn",
+        }:
+            return
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": final_title,
+            "homepage": href,
+            "email": email,
+            "photo_url": urljoin(base_url, img["src"].strip()) if img else "",
+            "source_url": base_url,
+        })
+
+    for node in soup.find_all(string=True):
+        text = re.sub(r"\s+", "", str(node or "")).strip()
+        label_title = _tongji_title_from_label(text)
+        if label_title:
+            current_title = "" if label_title == "__skip__" else label_title
+            continue
+        parent = node.parent
+        if parent is None:
+            continue
+        if parent.name == "a" and parent.get("href"):
+            add_anchor(parent, current_title)
+            continue
+        for anchor in parent.find_all("a", href=True, recursive=False):
+            add_anchor(anchor, current_title)
+
+    return advisors
+
+
+def _is_ecnu_stat_faculty_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (parsed.hostname or "").lower() == "stat.ecnu.edu.cn" and re.search(
+        r"/(?:9701|jswyjy|fjs|jswzj|jzjs|yjds|1wtjxx|2wswtjx|3wbxyjsx|4wjrgcyjrtjx|tjjckxyjy_38162)/list\d*\.htm$",
+        parsed.path.rstrip("/"),
+    ) is not None
+
+
+def _extract_ecnu_stat_advisors(html: str, base_url: str) -> list[dict]:
+    if not html or not _is_ecnu_stat_faculty_url(base_url):
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for item in soup.select("li.news"):
+        title_link = item.select_one(".news_title a[title][href]")
+        if not title_link:
+            continue
+        name = re.sub(r"\s+", "", title_link.get("title") or title_link.get_text("", strip=True))
+        if not _is_name_like(name) or name in seen:
+            continue
+        seen.add(name)
+        homepage = urljoin(base_url, title_link.get("href", ""))
+        title_el = item.select_one(".news_title .k4")
+        title = title_el.get_text(" ", strip=True)[:60] if title_el else ""
+        research_areas: list[str] = []
+        email = ""
+        office = ""
+        for detail in item.select(".news_titlef"):
+            text = re.sub(r"\s+", " ", detail.get_text(" ", strip=True)).strip()
+            if text.startswith("研究方向"):
+                value = re.sub(r"^研究方向[:：]\s*", "", text).strip()
+                research_areas = [part.strip() for part in re.split(r"[、,，;；]", value) if part.strip()][:10]
+            elif text.startswith("邮箱"):
+                email = re.sub(r"^邮箱[:：]\s*", "", text).strip()[:120]
+            elif "办公室" in text:
+                office = re.sub(r"^办公室[:：]\s*", "", text).strip()[:200]
+        photo = ""
+        img = item.select_one(".news_imgs img[src]")
+        if img:
+            photo = urljoin(base_url, img.get("src", ""))
+        advisors.append({
+            "name": name,
+            "title": title,
+            "homepage": homepage,
+            "email": email,
+            "office": office,
+            "photo_url": photo,
+            "research_areas": research_areas,
+            "source_url": base_url,
+        })
+    return advisors
+
+
 def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
     """Extract teacher stubs from a 师资 page.
 
@@ -1631,11 +2849,55 @@ def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
     """
     if not html:
         return []
+    if _is_nju_is_teacher_home_url(base_url):
+        return []
     if _is_zju_icsr_faculty_url(base_url):
         return list(_extract_zju_icsr_advisor_profiles(html, base_url).values())
     fudan_profiles = _extract_fudan_inline_advisors(html, base_url)
     if fudan_profiles:
         return fudan_profiles
+    nju_ise_profiles = _extract_nju_ise_advisors(html, base_url)
+    if nju_ise_profiles:
+        return nju_ise_profiles
+    nju_sme_profiles = _extract_nju_sme_control_advisors(html, base_url)
+    if nju_sme_profiles:
+        return nju_sme_profiles
+    nju_profiles = _extract_nju_boshan_advisors(html, base_url)
+    if nju_profiles:
+        return nju_profiles
+    ustc_profiles = _extract_ustc_advisors(html, base_url)
+    if ustc_profiles:
+        return ustc_profiles
+    uestc_profiles = _extract_uestc_vsb_advisors(html, base_url)
+    if uestc_profiles:
+        return uestc_profiles
+    uestc_portal_profiles = _extract_uestc_faculty_portal_advisors(html, base_url)
+    if uestc_portal_profiles:
+        return uestc_portal_profiles
+    uestc_sise_profiles = _extract_uestc_sise_advisors(html, base_url)
+    if uestc_sise_profiles:
+        return uestc_sise_profiles
+    uestc_sias_profiles = _extract_uestc_sias_advisors(html, base_url)
+    if uestc_sias_profiles:
+        return uestc_sias_profiles
+    uestc_yjsjy_profiles = _extract_uestc_yjsjy_advisors(html, base_url)
+    if uestc_yjsjy_profiles:
+        return uestc_yjsjy_profiles
+    uestc_official_profiles = _extract_uestc_official_markdown_advisors(html, base_url)
+    if uestc_official_profiles:
+        return uestc_official_profiles
+    uestc_card_profiles = _extract_uestc_card_advisors(html, base_url)
+    if uestc_card_profiles:
+        return uestc_card_profiles
+    uestc_iffs_profiles = _extract_uestc_iffs_advisors(html, base_url)
+    if uestc_iffs_profiles:
+        return uestc_iffs_profiles
+    tongji_profiles = _extract_tongji_advisors(html, base_url)
+    if tongji_profiles:
+        return tongji_profiles
+    ecnu_stat_profiles = _extract_ecnu_stat_advisors(html, base_url)
+    if ecnu_stat_profiles:
+        return ecnu_stat_profiles
 
     soup = BeautifulSoup(html, "lxml")
     # Strip nav/footer to reduce false positives
@@ -1902,8 +3164,7 @@ async def crawl_school_colleges(
                 if c.get("discipline_category"):
                     existing_college.discipline_category = c["discipline_category"]
                 existing_college.homepage_url = c.get("url", "")
-                if c.get("faculty_list_url"):
-                    existing_college.faculty_list_url = c["faculty_list_url"]
+                existing_college.faculty_list_url = c.get("faculty_list_url", "")
                 if (
                     existing_college.advisors_crawled_at is None
                     or old_homepage_url != existing_college.homepage_url
@@ -2237,6 +3498,353 @@ def _find_fudan_pagination_links(html: str, base_url: str) -> list[str]:
     return out[:80]
 
 
+USTC_FACULTY_SUB_KEYWORDS = (
+    "院士", "正高", "副高", "教授", "副教授", "讲师", "特任", "研究员",
+    "指导教师", "外聘博导", "兼职教授/博导", "客座兼职教授",
+    "院内教员", "讲师及其他", "其他",
+)
+
+
+def _find_ustc_faculty_extra_links(html: str, base_url: str) -> list[str]:
+    """Find USTC category and pagination pages under faculty lists."""
+    if not html or not _is_ustc_faculty_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    parsed_base = urlparse(base_url)
+    out: list[str] = []
+    seen: set[str] = {parsed_base.geturl()}
+
+    def add(url: str) -> None:
+        absolute = urljoin(base_url, url)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").lower() != (parsed_base.hostname or "").lower():
+            return
+        if not re.search(r"/list\d*\.htm$", parsed.path.rstrip("/")):
+            return
+        normalized = parsed._replace(scheme=parsed_base.scheme).geturl()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        out.append(normalized)
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("javascript:", "mailto:", "#")):
+            continue
+        text = re.sub(r"\s+", "", a.get_text("", strip=True))
+        text = text.strip("：:>＞")
+        if any(keyword in text for keyword in USTC_FACULTY_SUB_KEYWORDS):
+            add(href)
+        elif re.fullmatch(r"\d+", text) or text in {">", ">>", "下一页", "尾页"}:
+            add(href)
+
+    page_count = 0
+    text = soup.get_text(" ", strip=True)
+    m = re.search(r"页码\s*\d+\s*/\s*(\d+)", text)
+    if m:
+        try:
+            page_count = int(m.group(1))
+        except ValueError:
+            page_count = 0
+    if page_count and re.search(r"/list\d*\.htm$", parsed_base.path):
+        for page in range(2, min(page_count, 80) + 1):
+            page_path = re.sub(r"/list\d*\.htm$", f"/list{page}.htm", parsed_base.path)
+            add(parsed_base._replace(path=page_path).geturl())
+
+    return out[:120]
+
+
+def _find_uestc_faculty_portal_extra_links(html: str, base_url: str) -> list[str]:
+    """Find pagination pages in UESTC official faculty-homepage college lists."""
+    if not html or not _is_uestc_faculty_portal_url(base_url):
+        return []
+    if _is_uestc_faculty_access_denied_page(html, base_url):
+        return []
+
+    parsed_base = urlparse(base_url)
+    query = parse_qs(parsed_base.query, keep_blank_values=True)
+    total_page = 0
+    for value in query.get("totalpage", []):
+        if str(value).isdigit():
+            total_page = max(total_page, int(value))
+
+    text = BeautifulSoup(html, "lxml").get_text(" ", strip=True)
+    for pattern in (r"共\s*\d+\s*条\s*\d+\s*/\s*(\d+)", r"\b\d+\s*/\s*(\d+)\s*页"):
+        match = re.search(pattern, text)
+        if match:
+            total_page = max(total_page, int(match.group(1)))
+
+    if total_page <= 1:
+        return []
+
+    out: list[str] = []
+    seen: set[str] = {parsed_base._replace(fragment="").geturl()}
+    for page in range(2, min(total_page, 80) + 1):
+        next_query = dict(query)
+        next_query["PAGENUM"] = [str(page)]
+        next_query["totalpage"] = [str(total_page)]
+        normalized = parsed_base._replace(
+            query=urlencode(next_query, doseq=True),
+            fragment="",
+        ).geturl()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
+def _find_uestc_sise_extra_links(html: str, base_url: str) -> list[str]:
+    """Find official SISE faculty category and pagination pages."""
+    if not html or (urlparse(base_url).hostname or "").lower() != "sise.uestc.edu.cn":
+        return []
+    if "/xygk/szdwq/" not in urlparse(base_url).path:
+        return []
+
+    allowed = (
+        "/xygk/szdwq/js",
+        "/xygk/szdwq/fjs",
+        "/xygk/szdwq/js_zlyjy_gcs",
+    )
+    out: list[str] = []
+    seen: set[str] = {urlparse(base_url)._replace(fragment="").geturl()}
+    for match in re.finditer(r"\]\((https://sise\.uestc\.edu\.cn/xygk/szdwq/[^)]+)\)", html):
+        url = match.group(1).strip()
+        path = urlparse(url).path
+        if not path.endswith(".htm"):
+            continue
+        if not any(path.startswith(prefix) for prefix in allowed):
+            continue
+        normalized = urlparse(url)._replace(fragment="").geturl()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out[:60]
+
+
+def _find_uestc_icct_extra_links(html: str, base_url: str) -> list[str]:
+    """Find UESTC official advisor-card pagination pages."""
+    if not html or not _is_uestc_card_advisor_list_url(base_url):
+        return []
+
+    parsed_base = urlparse(base_url)
+    if _is_uestc_scse_faculty_url(base_url):
+        match = re.search(r"共\s*\d+\s*条.*?\d+\s*/\s*(\d+)", html)
+        if not match:
+            return []
+        total_page = int(match.group(1))
+        query = parse_qs(parsed_base.query, keep_blank_values=True)
+        out = []
+        for page in range(2, min(total_page, 80) + 1):
+            next_query = dict(query)
+            next_query["fromWenNOWPAGE"] = [str(page)]
+            out.append(parsed_base._replace(query=urlencode(next_query, doseq=True), fragment="").geturl())
+        return out
+
+    out: list[str] = []
+    seen: set[str] = {parsed_base._replace(fragment="").geturl()}
+    for match in re.finditer(r"\]\((https://icct\.uestc\.edu\.cn/rcpy/dsjs/[^)]+)\)", html):
+        url = match.group(1).strip()
+        path = urlparse(url).path
+        if not path.endswith(".htm"):
+            continue
+        normalized = urlparse(url)._replace(fragment="").geturl()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out[:20]
+
+
+def _find_tongji_faculty_extra_links(html: str, base_url: str) -> list[str]:
+    """Find Tongji faculty category pages that are part of one college list."""
+    if not html or not _is_tongji_faculty_url(base_url):
+        return []
+
+    parsed_base = urlparse(base_url)
+    host = (parsed_base.hostname or "").lower()
+    out: list[str] = []
+    seen: set[str] = {parsed_base.geturl()}
+
+    def add(url: str) -> None:
+        absolute = urljoin(base_url, url)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").lower() != host:
+            return
+        normalized = parsed._replace(fragment="").geturl()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        out.append(normalized)
+
+    if host == "see.tongji.edu.cn":
+        for rank in ("jiaoshou", "fjs", "js"):
+            for letter in ("A_G", "H_N", "O_T", "U_Z"):
+                add(f"https://see.tongji.edu.cn/szdw1/jzyg/{rank}/{letter}.htm")
+        return out[:40]
+
+    if host == "mefaculty.tongji.edu.cn":
+        for path in (
+            "/szdw/jsml1/jxgcx.htm",
+            "/szdw/jsml1/jqrgcx.htm",
+            "/szdw/jsml1/ygjczx.htm",
+            "/szdw/jsml1/zdjxgczx.htm",
+        ):
+            add(f"https://mefaculty.tongji.edu.cn{path}")
+        return out[:20]
+
+    return []
+
+
+ECNU_STAT_FACULTY_LABELS = (
+    "教授/研究员", "副教授", "助理教授", "兼职教授", "业界导师",
+    "统计学系", "生物统计系", "保险与精算系", "金融工程与金融统计系", "统计交叉科学研究院",
+)
+
+
+def _find_ecnu_stat_faculty_extra_links(html: str, base_url: str) -> list[str]:
+    if not html or not _is_ecnu_stat_faculty_url(base_url):
+        return []
+
+    soup = BeautifulSoup(html, "lxml")
+    parsed_base = urlparse(base_url)
+    out: list[str] = []
+    seen: set[str] = {parsed_base.geturl()}
+
+    def add(url: str) -> None:
+        absolute = urljoin(base_url, url)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").lower() != "stat.ecnu.edu.cn":
+            return
+        if not re.search(r"/list\d*\.htm$", parsed.path.rstrip("/")):
+            return
+        normalized = parsed._replace(fragment="").geturl()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        out.append(normalized)
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith(("javascript:", "mailto:", "#")):
+            continue
+        text = re.sub(r"\s+", "", a.get_text("", strip=True))
+        if text in {re.sub(r"\s+", "", label) for label in ECNU_STAT_FACULTY_LABELS}:
+            add(href)
+        elif text in {"下一页>>", "尾页", "下一页", "末页"} or re.fullmatch(r"\d+", text):
+            add(href)
+
+    all_pages = soup.select_one("em.all_pages")
+    if all_pages and re.search(r"/list\d*\.htm$", parsed_base.path):
+        try:
+            page_count = int(all_pages.get_text("", strip=True))
+        except ValueError:
+            page_count = 0
+        for page in range(2, min(page_count, 30) + 1):
+            page_path = re.sub(r"/list\d*\.htm$", f"/list{page}.htm", parsed_base.path)
+            add(parsed_base._replace(path=page_path).geturl())
+
+    return out[:80]
+
+
+def _is_ecnu_teacher_home_list_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        (parsed.hostname or "").lower() == "faculty.ecnu.edu.cn"
+        and parsed.path.rstrip("/") == "/_s2/ssxqy/list.psp"
+        and bool(parse_qs(parsed.query).get("wp_tw_orgId"))
+    )
+
+
+def _extract_ecnu_teacher_home_org_id(url: str) -> str:
+    values = parse_qs(urlparse(url).query).get("wp_tw_orgId") or []
+    org_id = values[0].strip() if values else ""
+    if not re.fullmatch(r"\d+", org_id):
+        raise ValueError(f"ECNU teacherHome URL missing numeric wp_tw_orgId: {url}")
+    return org_id
+
+
+async def _fetch_ecnu_teacher_home_advisors(
+    client: httpx.AsyncClient,
+    html: str,
+    base_url: str,
+) -> list[dict]:
+    """Fetch ECNU's official faculty-homepage department list.
+
+    ECNU exposes all department teacher rows through the same teacherHome
+    endpoint used by its public "教师个人主页" site. The visible list page is
+    only a JS shell, so static HTML extraction sees almost nothing.
+    """
+    if not _is_ecnu_teacher_home_list_url(base_url):
+        return []
+
+    org_id = _extract_ecnu_teacher_home_org_id(base_url)
+    endpoint = "https://faculty.ecnu.edu.cn/_wp3services/generalQuery?queryObj=teacherHome"
+    conditions = [
+        {"field": "language", "value": 1, "judge": "="},
+        {"field": "ownDepartment", "value": org_id, "judge": "="},
+        {"field": "title", "value": "", "judge": "like"},
+        {"field": "published", "value": "1", "judge": "="},
+    ]
+    return_infos = [
+        {"field": "title", "name": "title"},
+        {"field": "career", "name": "career"},
+        {"field": "visitCount", "name": "visitCount"},
+        {"field": "headerPic", "name": "headerPic"},
+        {"field": "cnUrl", "name": "cnUrl"},
+        {"field": "department", "name": "department"},
+        {"field": "publishStatus", "name": "publishStatus"},
+    ]
+    form = {
+        "siteId": org_id,
+        "pageIndex": "1",
+        "rows": "500",
+        "conditions": json.dumps(conditions, ensure_ascii=False),
+        "orders": "",
+        "returnInfos": json.dumps(return_infos, ensure_ascii=False),
+        "articleType": "1",
+        "level": "0",
+        "deptTecOrder": "1_1",
+        "pageEvent": "dataSearchByPageIndex",
+    }
+    resp = await client.post(endpoint, data=form, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
+    if resp.status_code not in (200, 202, 203):
+        raise RuntimeError(f"ECNU teacherHome HTTP {resp.status_code}: {base_url}")
+    try:
+        payload = resp.json()
+    except ValueError as exc:
+        raise RuntimeError(f"ECNU teacherHome returned non-JSON: {base_url}") from exc
+
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        raise RuntimeError(f"ECNU teacherHome payload missing data rows: {base_url}")
+
+    advisors: list[dict] = []
+    seen_names: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or row.get("publishStatus") != 1:
+            continue
+        name = re.sub(r"\s+", "", str(row.get("title") or ""))
+        if not _is_name_like(name) or name in seen_names:
+            continue
+        seen_names.add(name)
+        cn_url = str(row.get("cnUrl") or "").strip()
+        if not cn_url:
+            raise RuntimeError(f"ECNU teacherHome row has no cnUrl: {base_url} / {name}")
+        homepage = urljoin("https://faculty.ecnu.edu.cn/", cn_url)
+        photo = urljoin("https://faculty.ecnu.edu.cn/", str(row.get("headerPic") or "")) if row.get("headerPic") else ""
+        advisors.append({
+            "name": name,
+            "title": str(row.get("career") or "")[:60],
+            "homepage": homepage,
+            "photo_url": photo,
+            "source_url": base_url,
+        })
+    return advisors
+
+
 async def _fetch_fudan_general_query_teachers(
     client: httpx.AsyncClient,
     html: str,
@@ -2257,7 +3865,7 @@ async def _fetch_fudan_general_query_teachers(
         and "{标题内容}" not in html
     ):
         return []
-    site_match = re.search(r"sudy-wp-siteId=['\"](\d+)['\"]", html)
+    site_match = re.search(r"sudy-wp-siteId\s*=\s*['\"](\d+)['\"]", html)
     if not site_match:
         return []
     endpoint = urljoin(base_url, "/_wp3services/generalQuery")
@@ -2343,6 +3951,124 @@ async def _fetch_fudan_general_query_teachers(
     return advisors
 
 
+async def _fetch_nju_is_teacher_home_advisors(
+    client: httpx.AsyncClient,
+    html: str,
+    base_url: str,
+) -> list[dict]:
+    """Fetch NJU Intelligent Science dynamic teacherHome rows."""
+    if not html or not _is_nju_is_teacher_home_url(base_url):
+        return []
+    site_match = re.search(r"sudy-wp-siteId\s*=\s*['\"](\d+)['\"]", html)
+    if not site_match:
+        return []
+
+    endpoint = urljoin(base_url, "/_wp3services/generalQuery?queryObj=teacherHome")
+    return_infos = [
+        {"field": "headerPic", "name": "headerPic"},
+        {"field": "exField1", "name": "exField1"},
+        {"field": "exField2", "name": "exField2"},
+        {"field": "exField3", "name": "exField3"},
+        {"field": "Phone", "name": "Phone"},
+        {"field": "cnUrl", "name": "cnUrl"},
+        {"field": "title", "name": "title"},
+        {"field": "post", "name": "post"},
+        {"field": "phone", "name": "phone"},
+    ]
+    form = {
+        "siteId": site_match.group(1),
+        "pageIndex": "1",
+        "rows": "300",
+        "orders": json.dumps([{"field": "siteSort", "type": "asc"}], ensure_ascii=False),
+        "returnInfos": json.dumps(return_infos, ensure_ascii=False),
+        "conditions": json.dumps([{"field": "published", "value": "1", "judge": "="}], ensure_ascii=False),
+        "articleType": "1",
+        "level": "1",
+    }
+    payload = None
+    try:
+        try:
+            resp = await client.post(endpoint, data=form, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
+        except (httpx.HTTPError, httpx.TimeoutException) as e:
+            msg = str(e)
+            if "SSL" not in msg and "handshake" not in msg.lower():
+                raise
+            logger.info("NJU IS teacherHome %s SSL fail, retrying with legacy ciphers", endpoint)
+            async with httpx.AsyncClient(verify=_PERMISSIVE_SSL) as legacy_client:
+                resp = await legacy_client.post(endpoint, data=form, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
+        if resp.status_code in (200, 202, 203):
+            payload = resp.json()
+    except (ValueError, httpx.HTTPError, httpx.TimeoutException) as e:
+        logger.info("NJU IS teacherHome httpx failed, retrying with curl: %s", e)
+
+    if payload is None:
+        args = [
+            "curl",
+            "-L",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            str(int(REQUEST_TIMEOUT)),
+            "--write-out",
+            "\n%{http_code}",
+            "-A",
+            "curl/8.7.1",
+            "-H",
+            "Accept: application/json",
+        ]
+        for key, value in form.items():
+            args.extend(["--data-urlencode", f"{key}={value}"])
+        args.append(endpoint)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.info("NJU IS teacherHome curl failed: %s", stderr.decode("utf-8", errors="replace")[:500])
+            return []
+        body = stdout.decode("utf-8", errors="replace")
+        payload_text, _, status_text = body.rpartition("\n")
+        if status_text.strip() not in {"200", "202", "203"}:
+            return []
+        try:
+            payload = json.loads(payload_text)
+        except ValueError:
+            return []
+
+    if payload is None:
+        return []
+    rows = payload.get("data")
+    if not isinstance(rows, list):
+        return []
+
+    advisors: list[dict] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or not _is_nju_is_academic_teacher(row):
+            continue
+        name = _clean_nju_name(str(row.get("title") or ""))
+        if not _is_name_like(name) or name in seen:
+            continue
+        title = str(row.get("exField2") or "")[:60]
+        area = str(row.get("exField1") or "").strip()
+        homepage = urljoin(base_url, str(row.get("cnUrl") or ""))
+        photo = urljoin(base_url, str(row.get("headerPic") or "")) if row.get("headerPic") else ""
+        seen.add(name)
+        advisors.append({
+            "name": name,
+            "title": title,
+            "homepage": homepage,
+            "phone": str(row.get("phone") or row.get("Phone") or "")[:40],
+            "photo_url": photo,
+            "research_areas": [area] if area else [],
+            "bio": "，".join([part for part in (name, title, area) if part]) + "。",
+            "source_url": base_url,
+        })
+    return advisors
+
+
 async def _crawl_one_college_advisors(
     client: httpx.AsyncClient,
     db: AsyncSession,
@@ -2370,6 +4096,22 @@ async def _crawl_one_college_advisors(
     advisors = await extract_advisor_list(client, school, college, faculty_url, faculty_html)
     if _is_fudan_url(faculty_url):
         dynamic_advisors = await _fetch_fudan_general_query_teachers(client, faculty_html, faculty_url)
+        seen_dynamic_names = {a["name"] for a in advisors}
+        for a in dynamic_advisors:
+            if a["name"] in seen_dynamic_names:
+                continue
+            seen_dynamic_names.add(a["name"])
+            advisors.append(a)
+    if _is_nju_is_teacher_home_url(faculty_url):
+        dynamic_advisors = await _fetch_nju_is_teacher_home_advisors(client, faculty_html, faculty_url)
+        seen_dynamic_names = {a["name"] for a in advisors}
+        for a in dynamic_advisors:
+            if a["name"] in seen_dynamic_names:
+                continue
+            seen_dynamic_names.add(a["name"])
+            advisors.append(a)
+    if _is_ecnu_teacher_home_list_url(faculty_url):
+        dynamic_advisors = await _fetch_ecnu_teacher_home_advisors(client, faculty_html, faculty_url)
         seen_dynamic_names = {a["name"] for a in advisors}
         for a in dynamic_advisors:
             if a["name"] in seen_dynamic_names:
@@ -2419,26 +4161,27 @@ async def _crawl_one_college_advisors(
     # Some Webplus faculty pages are a category frame or only show one institute.
     # Follow the visible sub-list pages and merge them without deleting existing DB rows.
     seen_names: set[str] = {a["name"] for a in advisors}
-    for sub_url in _find_faculty_sub_links(faculty_html, faculty_url):
-        if _same_page_url(sub_url, faculty_url):
-            continue
-        await asyncio.sleep(REQUEST_DELAY_SECONDS)
-        sub_html = await fetch_html(client, sub_url)
-        if not sub_html:
-            continue
-        sub_advisors = heuristic_extract_advisors(sub_html, sub_url)
-        if not sub_advisors:
-            sub_advisors = await _llm_extract_advisors(client, sub_html, sub_url)
-            if sub_advisors:
-                logger.info("sub-page LLM fallback: %s → %d teachers", sub_url, len(sub_advisors))
-        for a in sub_advisors:
-            if a["name"] in seen_names:
+    if not _is_nju_is_teacher_home_url(faculty_url) and not _is_ecnu_stat_faculty_url(faculty_url):
+        for sub_url in _find_faculty_sub_links(faculty_html, faculty_url):
+            if _same_page_url(sub_url, faculty_url):
                 continue
-            a.setdefault("source_url", sub_url)
-            if a.get("bio"):
-                a.setdefault("raw_html", sub_html[:100000])
-            seen_names.add(a["name"])
-            advisors.append(a)
+            await asyncio.sleep(REQUEST_DELAY_SECONDS)
+            sub_html = await fetch_html(client, sub_url)
+            if not sub_html:
+                continue
+            sub_advisors = heuristic_extract_advisors(sub_html, sub_url)
+            if not sub_advisors:
+                sub_advisors = await _llm_extract_advisors(client, sub_html, sub_url)
+                if sub_advisors:
+                    logger.info("sub-page LLM fallback: %s → %d teachers", sub_url, len(sub_advisors))
+            for a in sub_advisors:
+                if a["name"] in seen_names:
+                    continue
+                a.setdefault("source_url", sub_url)
+                if a.get("bio"):
+                    a.setdefault("raw_html", sub_html[:100000])
+                seen_names.add(a["name"])
+                advisors.append(a)
 
     # Fudan CS/AI pages often put most teachers on explicit pagination pages.
     for page_url in _find_fudan_pagination_links(faculty_html, faculty_url):
@@ -2485,13 +4228,171 @@ async def _crawl_one_college_advisors(
                 seen_names.add(a["name"])
                 advisors.append(a)
 
+    # USTC CS/AI-related sites split faculty across rank/category pages and
+    # Webplus pagination. Merge those pages only for USTC faculty URLs.
+    ustc_extra_seen: set[str] = {faculty_url}
+    ustc_extra_queue = _find_ustc_faculty_extra_links(faculty_html, faculty_url)
+    for item in ustc_extra_queue:
+        ustc_extra_seen.add(item)
+    while ustc_extra_queue:
+        extra_url = ustc_extra_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_ustc_faculty_extra_links(extra_html, extra_url):
+            if nested_url in ustc_extra_seen:
+                continue
+            ustc_extra_seen.add(nested_url)
+            ustc_extra_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            seen_names.add(a["name"])
+            advisors.append(a)
+
+    # UESTC's official faculty-homepage platform paginates each college list
+    # with PAGENUM/totalpage query parameters.
+    uestc_extra_seen: set[str] = {faculty_url}
+    uestc_extra_queue = _find_uestc_faculty_portal_extra_links(faculty_html, faculty_url)
+    for item in uestc_extra_queue:
+        uestc_extra_seen.add(item)
+    while uestc_extra_queue:
+        extra_url = uestc_extra_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_uestc_faculty_portal_extra_links(extra_html, extra_url):
+            if nested_url in uestc_extra_seen:
+                continue
+            uestc_extra_seen.add(nested_url)
+            uestc_extra_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            seen_names.add(a["name"])
+            advisors.append(a)
+
+    # UESTC SISE publishes faculty cards on its official college website,
+    # split by rank and Webplus pagination.
+    sise_extra_seen: set[str] = {faculty_url}
+    sise_extra_queue = _find_uestc_sise_extra_links(faculty_html, faculty_url)
+    for item in sise_extra_queue:
+        sise_extra_seen.add(item)
+    while sise_extra_queue:
+        extra_url = sise_extra_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_uestc_sise_extra_links(extra_html, extra_url):
+            if nested_url in sise_extra_seen:
+                continue
+            sise_extra_seen.add(nested_url)
+            sise_extra_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            if a.get("bio"):
+                a.setdefault("raw_html", extra_html[:100000])
+            seen_names.add(a["name"])
+            advisors.append(a)
+
+    # UESTC SCSE/ICCT publish advisor cards on paginated official
+    # college/institute pages.
+    icct_extra_seen: set[str] = {faculty_url}
+    icct_extra_queue = _find_uestc_icct_extra_links(faculty_html, faculty_url)
+    for item in icct_extra_queue:
+        icct_extra_seen.add(item)
+    while icct_extra_queue:
+        extra_url = icct_extra_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_uestc_icct_extra_links(extra_html, extra_url):
+            if nested_url in icct_extra_seen:
+                continue
+            icct_extra_seen.add(nested_url)
+            icct_extra_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            seen_names.add(a["name"])
+            advisors.append(a)
+
+    # Tongji's relevant schools split teacher lists by rank/letter or by
+    # department. Merge those pages only for Tongji faculty URLs.
+    tongji_extra_seen: set[str] = {faculty_url}
+    tongji_extra_queue = _find_tongji_faculty_extra_links(faculty_html, faculty_url)
+    for item in tongji_extra_queue:
+        tongji_extra_seen.add(item)
+    while tongji_extra_queue:
+        extra_url = tongji_extra_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_tongji_faculty_extra_links(extra_html, extra_url):
+            if nested_url in tongji_extra_seen:
+                continue
+            tongji_extra_seen.add(nested_url)
+            tongji_extra_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            seen_names.add(a["name"])
+            advisors.append(a)
+
+    # ECNU statistics uses static faculty cards split by rank/department and
+    # paginated as list2/list3 pages. Keep this adapter scoped to that host.
+    ecnu_stat_seen: set[str] = {faculty_url}
+    ecnu_stat_queue = _find_ecnu_stat_faculty_extra_links(faculty_html, faculty_url)
+    for item in ecnu_stat_queue:
+        ecnu_stat_seen.add(item)
+    while ecnu_stat_queue:
+        extra_url = ecnu_stat_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_ecnu_stat_faculty_extra_links(extra_html, extra_url):
+            if nested_url in ecnu_stat_seen:
+                continue
+            ecnu_stat_seen.add(nested_url)
+            ecnu_stat_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            seen_names.add(a["name"])
+            advisors.append(a)
+
     if not advisors:
         return 0
 
     existing = (await db.execute(
         select(Advisor).where(Advisor.college_id == college.id)
     )).scalars().all()
-    authoritative_sync = _is_authoritative_fudan_advisor_source(faculty_url)
+    authoritative_sync = (
+        _is_authoritative_fudan_advisor_source(faculty_url)
+        or _is_nju_is_teacher_home_url(faculty_url)
+        or _is_ecnu_teacher_home_list_url(faculty_url)
+        or _is_ecnu_stat_faculty_url(faculty_url)
+        or _is_uestc_faculty_portal_url(faculty_url)
+        or _is_uestc_sise_faculty_url(faculty_url)
+        or _is_uestc_sias_advisor_list_url(faculty_url)
+        or _is_uestc_yjsjy_advisor_list_url(faculty_url)
+        or _is_uestc_official_markdown_faculty_url(faculty_url)
+        or _is_uestc_icct_advisor_list_url(faculty_url)
+        or _is_uestc_scse_faculty_url(faculty_url)
+    )
     if authoritative_sync:
         current_names = {a["name"] for a in advisors}
         stale_advisors = [a for a in existing if a.name not in current_names]
@@ -2529,6 +4430,7 @@ async def _crawl_one_college_advisors(
         is_source_adapter_detail = (
             _is_zju_icsr_faculty_url(source_url)
             or _is_fudan_url(source_url)
+            or _is_nju_is_teacher_home_url(source_url)
         )
         existing_advisor = existing_by_name.get(a["name"])
         if existing_advisor:
@@ -2651,8 +4553,8 @@ ADVISOR_DETAIL_PROMPT = """你正在分析一位中国高校老师的个人主�
 ### 任务（仅基于上面的文本，不要瞎编）
 - title: 职称（教授 / 副教授 / 助理教授 / 研究员 / 副研究员 / 讲师 / 博士后 / 长聘 / 特聘 等）
 - title 要保留主页里的最具体原文短语；例如“百人计划研究员”不要简化成“研究员”
-- is_doctoral_supervisor: true/false/null（只有主页明确写“博士生导师/博导”才填 true；明确否定才填 false；没写填 null）
-- is_master_supervisor: true/false/null（只有主页明确写“硕士生导师/硕导”才填 true；明确否定才填 false；没写填 null；不要因为是博导就推断为硕导）
+- is_doctoral_supervisor: true/false/null（只判断当前身份；只有主页当前身份明确写“博士生导师/博导”才填 true；历史经历里曾经写过不算当前身份；明确否定才填 false；没写填 null）
+- is_master_supervisor: true/false/null（只判断当前身份；只有主页当前身份明确写“硕士生导师/硕导”才填 true；历史经历里曾经写过不算当前身份；明确否定才填 false；没写填 null；不要因为是博导就推断为硕导）
 - email: 邮箱地址
 - office: 办公地点（如 "电院 3 号楼 305"）
 - phone: 电话
@@ -2663,7 +4565,7 @@ ADVISOR_DETAIL_PROMPT = """你正在分析一位中国高校老师的个人主�
   - 重要奖项、学生培养、招生表述如果主页明确写出，也可以压缩进简介；不要为了短而删掉最关键的信息。
   - 只要主页文本里有姓名、职称、学院、研究方向、联系方式等基本信息，bio 就不要留空；可以客观写明“主页未提供更多经历/成果信息”。
 - education: [{{"degree":"博士","year":2018,"institution":"清华大学","advisor":"张三"}}, ...]（教育背景）
-- honors: ["IEEE Fellow", "杰青", ...]（明确奖项、荣誉、人才项目；尽量完整保留；不要收录博导/硕导、单位、研究方向）
+- honors: ["IEEE Fellow", "杰青", ...]（明确奖项、荣誉、人才项目；尽量完整保留；不要收录博导/硕导、单位、研究方向、学术兼职、社会兼职、学会理事、专委会委员、期刊编辑/编委）
 - recruiting_intent: 关于招生意愿/招生条件/招生方向的明确陈述（原文摘抄，不要总结）
 - external_links: 从“页面链接”里挑出对导师画像、学术身份确认、论文指标、开源项目、实验室/招生信息有价值的链接。
   - 只能使用“页面链接”中真实出现的 URL，不要编造 URL。
@@ -2692,6 +4594,42 @@ ADVISOR_DETAIL_PROMPT = """你正在分析一位中国高校老师的个人主�
 
 未知字段留空字符串/空数组。
 """
+
+
+ADVISOR_DETAIL_PROMPT_DEEPSEEK_STRICT = ADVISOR_DETAIL_PROMPT
+ADVISOR_DETAIL_PROMPT_DEFAULT = (
+    ADVISOR_DETAIL_PROMPT_DEEPSEEK_STRICT
+    .replace(
+        "- is_doctoral_supervisor: true/false/null（只判断当前身份；只有主页当前身份明确写“博士生导师/博导”才填 true；历史经历里曾经写过不算当前身份；明确否定才填 false；没写填 null）",
+        "- is_doctoral_supervisor: true/false/null（只有主页明确写“博士生导师/博导”才填 true；明确否定才填 false；没写填 null）",
+    )
+    .replace(
+        "- is_master_supervisor: true/false/null（只判断当前身份；只有主页当前身份明确写“硕士生导师/硕导”才填 true；历史经历里曾经写过不算当前身份；明确否定才填 false；没写填 null；不要因为是博导就推断为硕导）",
+        "- is_master_supervisor: true/false/null（只有主页明确写“硕士生导师/硕导”才填 true；明确否定才填 false；没写填 null；不要因为是博导就推断为硕导）",
+    )
+    .replace(
+        "- honors: [\"IEEE Fellow\", \"杰青\", ...]（明确奖项、荣誉、人才项目；尽量完整保留；不要收录博导/硕导、单位、研究方向、学术兼职、社会兼职、学会理事、专委会委员、期刊编辑/编委）",
+        "- honors: [\"IEEE Fellow\", \"杰青\", ...]（明确奖项、荣誉、人才项目；尽量完整保留；不要收录博导/硕导、单位、研究方向）",
+    )
+)
+ADVISOR_DETAIL_PROMPTS = {
+    "default": ADVISOR_DETAIL_PROMPT_DEFAULT,
+    "deepseek_strict": ADVISOR_DETAIL_PROMPT_DEEPSEEK_STRICT,
+}
+
+
+def _select_advisor_detail_prompt() -> str:
+    profile = LLM_CRAWL_PROMPT_PROFILE or "default"
+    prompt = ADVISOR_DETAIL_PROMPTS.get(profile)
+    if prompt is None:
+        raise ValueError(
+            f"Unsupported LLM_CRAWL_PROMPT_PROFILE={profile!r}; "
+            f"expected one of {sorted(ADVISOR_DETAIL_PROMPTS)}"
+        )
+    return prompt
+
+
+ADVISOR_DETAIL_PROMPT = _select_advisor_detail_prompt()
 
 
 def _clean_advisor_page(html: str) -> str:
@@ -2930,6 +4868,21 @@ def _sanitize_honors(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     blocked_exact = {"博士生导师", "硕士生导师", "博导", "硕导"}
+    blocked_role_keywords = (
+        "学会理事",
+        "理事",
+        "专委会委员",
+        "委员会委员",
+        "学术委员会委员",
+        "期刊编辑",
+        "编辑",
+        "编委",
+        "会员",
+        "审稿人",
+        "评审组成员",
+        "总体组专家",
+        "专家组成员",
+    )
     honors: list[str] = []
     seen: set[str] = set()
     for raw in value[:40]:
@@ -2938,6 +4891,8 @@ def _sanitize_honors(value: Any) -> list[str]:
             continue
         compact = re.sub(r"\s+", "", honor)
         if compact in blocked_exact:
+            continue
+        if any(keyword in compact for keyword in blocked_role_keywords):
             continue
         if honor in seen:
             continue
@@ -3127,6 +5082,10 @@ async def _prepare_advisor_page_context(
     html = await fetch_html(client, url)
     if not html:
         return "", "", [], ["homepage fetch failed"]
+    if _is_uestc_faculty_access_denied_page(html, url):
+        return "", "", [], ["UESTC faculty homepage requires campus network or VPN"]
+    if _is_ecnu_sso_login_page(html, url):
+        return "", "", [], ["ECNU homepage redirected to SSO login"]
     merged_html, adapter_errors = await _expand_zju_person_page(client, html, url)
     text = _clean_advisor_page(merged_html)
     links = _extract_link_candidates(merged_html, url)

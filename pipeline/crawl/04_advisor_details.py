@@ -129,6 +129,7 @@ async def main():
     parser.add_argument("--school", help="filter by school name LIKE pattern (e.g. '清华')")
     parser.add_argument("--college", help="filter by college name LIKE pattern; comma-separated patterns allowed")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--concurrency", type=int, default=1, help="parallel advisor detail jobs (default: 1)")
     args = parser.parse_args()
 
     log = setup_logging(LOG_PATH)
@@ -152,37 +153,67 @@ async def main():
         return
 
     t0 = time.time()
-    ok = 0; fail = 0; rate_skip = 0
-    last_school_id = None
-    consecutive_fail = 0
-    for i, a in enumerate(advisors, 1):
-        # Bigger pause when switching schools (different host = no need to throttle)
-        if a.school_id != last_school_id:
-            if last_school_id is not None:
-                log.info("--- switching schools, sleeping 5s ---")
-                await asyncio.sleep(5)
-            last_school_id = a.school_id
-            consecutive_fail = 0
+    ok = 0
+    fail = 0
+    rate_skip = 0
+    counter_lock = asyncio.Lock()
 
+    async def process_one(i: int, a: Advisor) -> bool:
+        nonlocal ok, fail, rate_skip
         log.info("[%4d/%d] %s / %s / %s", i, len(advisors), a.school.name, a.college.name, a.name)
-        res = await crawl_one_advisor(a)
-        if res.get("ok"):
-            ok += 1; consecutive_fail = 0
-            status = "detailed" if res.get("bio_present") else "partial"
-            log.info("    ✓ %s areas=%d", status, res.get("areas_n", 0))
-        else:
-            err = res.get("error", "?")
-            fail += 1
-            log.warning("    ✗ %s", err)
-            if any(s in err for s in ("503", "429", "fetch failed", "RemoteProtocolError", "Timeout")):
-                rate_skip += 1
+        try:
+            res = await crawl_one_advisor(a)
+        except Exception as e:
+            res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        rate_limited = False
+        async with counter_lock:
+            if res.get("ok"):
+                ok += 1
+                status = "detailed" if res.get("bio_present") else "partial"
+                log.info("    ✓ %s areas=%d", status, res.get("areas_n", 0))
+            else:
+                err = res.get("error", "?")
+                fail += 1
+                log.warning("    ✗ %s", err)
+                if any(s in err for s in ("503", "429", "fetch failed", "RemoteProtocolError", "Timeout")):
+                    rate_skip += 1
+                    rate_limited = True
+        await asyncio.sleep(DELAY_BETWEEN)
+        return rate_limited
+
+    concurrency = max(1, args.concurrency)
+    if concurrency == 1:
+        last_school_id = None
+        consecutive_fail = 0
+        for i, a in enumerate(advisors, 1):
+            # Bigger pause when switching schools (different host = no need to throttle)
+            if a.school_id != last_school_id:
+                if last_school_id is not None:
+                    log.info("--- switching schools, sleeping 5s ---")
+                    await asyncio.sleep(5)
+                last_school_id = a.school_id
+                consecutive_fail = 0
+
+            rate_limited = await process_one(i, a)
+            if rate_limited:
                 consecutive_fail += 1
-                # If rate-limited 5 in a row, skip to next school
+                # If rate-limited 5 in a row, pause before continuing.
                 if consecutive_fail >= 5:
                     log.warning("    >>> 5 consecutive rate errors, sleeping %ds", int(DELAY_AFTER_ERROR))
                     await asyncio.sleep(DELAY_AFTER_ERROR)
                     consecutive_fail = 0
-        await asyncio.sleep(DELAY_BETWEEN)
+            else:
+                consecutive_fail = 0
+    else:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def bounded_process(i: int, a: Advisor) -> None:
+            async with sem:
+                await process_one(i, a)
+
+        await asyncio.gather(
+            *(bounded_process(i, a) for i, a in enumerate(advisors, 1))
+        )
 
     elapsed = time.time() - t0
     log.info("=== done in %.0fs: %d ok, %d fail, %d rate-skipped ===", elapsed, ok, fail, rate_skip)
