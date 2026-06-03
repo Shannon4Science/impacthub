@@ -139,6 +139,47 @@
       ]
     },
     {
+      "school": "北京大学",
+      "college_index_url": "https://www.pku.edu.cn/department.html",
+      "colleges": [
+        {
+          "name": "计算机学院",
+          "url": "https://cs.pku.edu.cn/",
+          "faculty_list_url": "https://cs.pku.edu.cn/szdw/jyxl/amz/ALL.htm",
+          "discipline_category": "工学",
+          "reason": "北京大学院系设置页面列出信息科学与技术学部相关学院；计算机学院官网“师资队伍-教研系列-ALL”以教师卡片和分页列出教师，03_advisor_stubs 对该入口做北大卡片和分页适配。"
+        },
+        {
+          "name": "智能学院",
+          "url": "https://www.cis.pku.edu.cn/",
+          "faculty_list_url": "https://www.cis.pku.edu.cn/szdw/zzjs.htm",
+          "discipline_category": "工学",
+          "reason": "北京大学智能学院是人工智能相关教学科研单位；学院官网“师资队伍-专职教师”以分页教师卡片列出研究领域、邮箱和个人页，03_advisor_stubs 对该入口做北大卡片和分页适配。"
+        },
+        {
+          "name": "电子学院",
+          "url": "https://ele.pku.edu.cn/",
+          "faculty_list_url": "https://ele.pku.edu.cn/szdw/zzjs.htm",
+          "discipline_category": "工学",
+          "reason": "北京大学电子学院覆盖电子、通信、光电、信息处理等 CS/AI 相关方向；学院官网“师资队伍-在职教师”以分页教师卡片列出教师，03_advisor_stubs 对该入口做北大卡片和分页适配。"
+        },
+        {
+          "name": "集成电路学院",
+          "url": "https://ic.pku.edu.cn/",
+          "faculty_list_url": "https://ic.pku.edu.cn/szdw/zzjs/jcwndzx1/index.htm",
+          "discipline_category": "工学",
+          "reason": "北京大学集成电路学院是信息学部相关学院；学院官网“师资队伍-专职教师”按系所中心分入口列出教师，03_advisor_stubs 对该入口做北大脚本跳转、分系聚合和卡片解析适配。"
+        },
+        {
+          "name": "软件与微电子学院",
+          "url": "https://ss.pku.edu.cn/",
+          "faculty_list_url": "https://ss.pku.edu.cn/sztd/xssbsz/index.htm",
+          "discipline_category": "工学",
+          "reason": "北京大学软件与微电子学院覆盖软件工程、网络软件与系统安全、微电子等方向；学院官网“师资团队”按工学博士、电子信息博士、电子信息硕士等入口列出导师，03_advisor_stubs 对该入口做北大脚本跳转和技术相关子栏目聚合适配。"
+        }
+      ]
+    },
+    {
       "school": "南京大学",
       "college_index_url": "https://www.nju.edu.cn/xybm.htm",
       "colleges": [

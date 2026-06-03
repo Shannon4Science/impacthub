@@ -930,6 +930,7 @@ _NJU_HOST_RE = re.compile(r"(^|\.)nju\.edu\.cn$", re.I)
 _USTC_HOST_RE = re.compile(r"(^|\.)ustc\.edu\.cn$", re.I)
 _UESTC_HOST_RE = re.compile(r"(^|\.)uestc\.edu\.cn$", re.I)
 _TONGJI_HOST_RE = re.compile(r"(^|\.)tongji\.edu\.cn$", re.I)
+_PKU_HOST_RE = re.compile(r"(^|\.)pku\.edu\.cn$", re.I)
 _TITLE_KEYWORDS = (
     "教授", "副教授", "讲师", "研究员", "副研究员", "助理研究员",
     "特聘教授", "求是", "百人计划", "院士", "博导", "硕导",
@@ -1035,6 +1036,11 @@ def _is_uestc_card_advisor_list_url(url: str) -> bool:
 def _is_tongji_url(url: str) -> bool:
     host = urlparse(url).hostname or ""
     return bool(_TONGJI_HOST_RE.search(host))
+
+
+def _is_pku_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return bool(_PKU_HOST_RE.search(host))
 
 
 def _is_name_like(text: str) -> bool:
@@ -1146,6 +1152,138 @@ def _split_research_areas(text: str) -> list[str]:
         return []
     parts = re.split(r"[、,，；;]", text)
     return [p.strip(" /。；;，,")[:80] for p in parts if p.strip(" /。；;，,")][:10]
+
+
+PKU_CARD_SELECTORS = (
+    "ul.list15 li",
+    ".list_js li",
+    "ul.m-list9 li",
+    ".gp-subRight-con ul.list03 li",
+    ".main ul.tab-content-list li",
+)
+PKU_FIELD_LABELS = (
+    "职称", "研究所", "研究中心", "研究领域", "研究方向",
+    "办公电话", "电子邮件", "邮箱", "Email", "E-mail",
+)
+PKU_FACULTY_EXTRA_LABELS = (
+    "专职教师", "在职教师",
+    "集成微纳电子系", "集成电路设计系", "设计自动化与计算系统系",
+    "集成微纳系统系", "集成电路先进制造技术研究中心",
+    "工学博士", "电子信息博士", "电子信息硕士",
+)
+
+
+def _pku_field_value(text: str, label: str) -> str:
+    labels = [re.escape(item) for item in PKU_FIELD_LABELS if item != label]
+    pattern = rf"{re.escape(label)}\s*[:：]\s*(.*?)(?=(?:{'|'.join(labels)})\s*[:：]|$)"
+    match = re.search(pattern, text or "", flags=re.I)
+    if not match:
+        return ""
+    return _clean_inline_text(match.group(1)).strip("：:；;，,。 ")
+
+
+def _pku_email_from_text(text: str) -> str:
+    explicit = (
+        _pku_field_value(text, "电子邮件")
+        or _pku_field_value(text, "邮箱")
+        or _pku_field_value(text, "Email")
+        or _pku_field_value(text, "E-mail")
+    )
+    if explicit:
+        explicit = explicit.replace(" at ", "@").replace("[at]", "@")
+        if "@" not in explicit:
+            explicit = re.sub(r"\s+([A-Za-z0-9.-]+\.[A-Za-z]{2,})$", r"@\1", explicit)
+        return explicit[:120]
+    match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", text or "")
+    return match.group(0)[:120] if match else ""
+
+
+def _pku_title_from_text(text: str, name: str) -> str:
+    title = _pku_field_value(text, "职称")
+    if title:
+        return title[:80]
+    rest = re.sub(rf"^\s*{re.escape(name)}\s*", "", text or "").strip()
+    for part in reversed(re.split(r"\s+", rest)):
+        if _looks_like_academic_title(part):
+            return part.strip("，,；;。 ")[:80]
+    match = re.search(
+        r"(长聘教授|长聘副教授|预聘副教授|教授级高级工程师|高级工程师|"
+        r"助理教授|助理研究员|副教授|教授|副研究员|研究员|讲师|工程师)",
+        rest,
+    )
+    return match.group(1)[:80] if match else ""
+
+
+def _extract_pku_advisors(html: str, base_url: str) -> list[dict]:
+    if not html or not _is_pku_url(base_url):
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    out: list[dict] = []
+    seen_names: set[str] = set()
+
+    def add_from_card(card) -> None:
+        if card.find_parent(class_="gp-subNavm"):
+            return
+        text = _clean_inline_text(card.get_text(" ", strip=True))
+        if not text or not _looks_like_academic_title(text):
+            return
+        name = ""
+        for heading in card.find_all(["h3", "h4", "h5", "dt"], limit=5):
+            heading_text = re.sub(r"\s+", "", heading.get_text("", strip=True))
+            if _is_name_like(heading_text):
+                name = heading_text
+                break
+        anchor = None
+        for item in card.find_all("a", href=True):
+            item_text = re.sub(r"\s+", "", item.get("title") or item.get_text("", strip=True))
+            if _is_name_like(item_text):
+                anchor = item
+                if not name:
+                    name = item_text
+                break
+            if anchor is None:
+                anchor = item
+        if anchor is None:
+            return
+        if not name:
+            match = re.match(r"\s*([\u4e00-\u9fff·]{2,4})(?=\s|职称|研究|长聘|预聘|教授|副教授|研究员|讲师|工程师)", text)
+            if match:
+                name = re.sub(r"\s+", "", match.group(1))
+        if not _is_name_like(name) or name in seen_names:
+            return
+        href = anchor["href"].strip()
+        if not href or href.startswith(("javascript:", "mailto:", "#")):
+            homepage = ""
+        else:
+            homepage = urljoin(base_url, href)
+        img = card.find("img", src=True)
+        photo_url = ""
+        if img and img["src"].strip() and not img["src"].strip().startswith(("data:", "javascript:")):
+            photo_url = urljoin(base_url, img["src"].strip())
+        research_text = _pku_field_value(text, "研究领域") or _pku_field_value(text, "研究方向")
+        bio_parts = [text]
+        institute = _pku_field_value(text, "研究所") or _pku_field_value(text, "研究中心")
+        if institute and institute not in text:
+            bio_parts.append(f"研究机构：{institute}")
+        seen_names.add(name)
+        out.append({
+            "name": name,
+            "title": _pku_title_from_text(text, name),
+            "homepage": homepage,
+            "email": _pku_email_from_text(text),
+            "phone": _pku_field_value(text, "办公电话")[:40],
+            "photo_url": photo_url,
+            "research_areas": _split_research_areas(research_text),
+            "bio": "\n".join(part for part in bio_parts if part)[:6000],
+            "raw_html": str(card)[:100000],
+            "source_url": base_url,
+        })
+
+    for selector in PKU_CARD_SELECTORS:
+        for card in soup.select(selector):
+            add_from_card(card)
+
+    return out
 
 
 def _zju_icsr_title_from_text(text: str) -> str:
@@ -2853,6 +2991,9 @@ def heuristic_extract_advisors(html: str, base_url: str) -> list[dict]:
         return []
     if _is_zju_icsr_faculty_url(base_url):
         return list(_extract_zju_icsr_advisor_profiles(html, base_url).values())
+    pku_profiles = _extract_pku_advisors(html, base_url)
+    if pku_profiles:
+        return pku_profiles
     fudan_profiles = _extract_fudan_inline_advisors(html, base_url)
     if fudan_profiles:
         return fudan_profiles
@@ -3496,6 +3637,59 @@ def _find_fudan_pagination_links(html: str, base_url: str) -> list[str]:
                 add(parsed._replace(path=page_path).geturl())
 
     return out[:80]
+
+
+def _find_pku_faculty_extra_links(html: str, base_url: str) -> list[str]:
+    """Find PKU official faculty sub-category and pagination pages."""
+    if not html or not _is_pku_url(base_url):
+        return []
+    soup = BeautifulSoup(html, "lxml")
+    parsed_base = urlparse(base_url)
+    host = (parsed_base.hostname or "").lower()
+    out: list[str] = []
+    seen: set[str] = {parsed_base._replace(fragment="").geturl()}
+
+    def add(raw_url: str) -> None:
+        href = (raw_url or "").strip()
+        if not href or href.startswith(("javascript:", "mailto:", "#")):
+            return
+        absolute = urljoin(base_url, href)
+        parsed = urlparse(absolute)
+        if (parsed.hostname or "").lower() != host:
+            return
+        path = parsed.path.rstrip("/")
+        if host == "ic.pku.edu.cn" and not path.startswith("/szdw/zzjs/"):
+            return
+        if host == "ss.pku.edu.cn" and not path.startswith("/sztd/"):
+            return
+        if not path.endswith((".htm", ".html", "/index")):
+            return
+        normalized = parsed._replace(fragment="").geturl()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        out.append(normalized)
+
+    for a in soup.find_all("a", href=True):
+        text = re.sub(r"\s+", "", a.get_text("", strip=True))
+        href = a["href"].strip()
+        if text in {re.sub(r"\s+", "", item) for item in PKU_FACULTY_EXTRA_LABELS}:
+            add(href)
+        elif re.fullmatch(r"\d+", text) or text in {"下一页", "下页", "尾页", "末页", ">>", ">"}:
+            add(href)
+
+    page_text = soup.get_text(" ", strip=True)
+    page_match = re.search(r"共\s*\d+\s*条.*?\d+\s*/\s*(\d+)", page_text)
+    if page_match:
+        total = int(page_match.group(1))
+        path = parsed_base.path
+        for page in range(2, min(total, 80) + 1):
+            if re.search(r"/list\d*\.htm$", path):
+                add(parsed_base._replace(path=re.sub(r"/list\d*\.htm$", f"/list{page}.htm", path)).geturl())
+            elif path.endswith("zzjs.htm"):
+                add(parsed_base._replace(path=path.replace("zzjs.htm", f"zzjs/{page}.htm")).geturl())
+
+    return out[:120]
 
 
 USTC_FACULTY_SUB_KEYWORDS = (
@@ -4201,6 +4395,32 @@ async def _crawl_one_college_advisors(
             seen_names.add(a["name"])
             advisors.append(a)
 
+    # PKU CS/AI-related schools split official teacher lists across
+    # Webplus-style pagination, degree categories, and institute tabs.
+    pku_extra_seen: set[str] = {faculty_url}
+    pku_extra_queue = _find_pku_faculty_extra_links(faculty_html, faculty_url)
+    for item in pku_extra_queue:
+        pku_extra_seen.add(item)
+    while pku_extra_queue:
+        extra_url = pku_extra_queue.pop(0)
+        await asyncio.sleep(REQUEST_DELAY_SECONDS)
+        extra_html = await fetch_html(client, extra_url)
+        if not extra_html:
+            continue
+        for nested_url in _find_pku_faculty_extra_links(extra_html, extra_url):
+            if nested_url in pku_extra_seen:
+                continue
+            pku_extra_seen.add(nested_url)
+            pku_extra_queue.append(nested_url)
+        for a in heuristic_extract_advisors(extra_html, extra_url):
+            if a["name"] in seen_names:
+                continue
+            a.setdefault("source_url", extra_url)
+            if a.get("bio"):
+                a.setdefault("raw_html", extra_html[:100000])
+            seen_names.add(a["name"])
+            advisors.append(a)
+
     # CIRAM's own current 师资 page is empty, while its official 组成单位
     # point to separate public faculty lists. Aggregate those URLs only for
     # this Fudan site-specific adapter.
@@ -4392,6 +4612,7 @@ async def _crawl_one_college_advisors(
         or _is_uestc_official_markdown_faculty_url(faculty_url)
         or _is_uestc_icct_advisor_list_url(faculty_url)
         or _is_uestc_scse_faculty_url(faculty_url)
+        or _is_pku_url(faculty_url)
     )
     if authoritative_sync:
         current_names = {a["name"] for a in advisors}
@@ -4431,6 +4652,7 @@ async def _crawl_one_college_advisors(
             _is_zju_icsr_faculty_url(source_url)
             or _is_fudan_url(source_url)
             or _is_nju_is_teacher_home_url(source_url)
+            or _is_pku_url(source_url)
         )
         existing_advisor = existing_by_name.get(a["name"])
         if existing_advisor:
