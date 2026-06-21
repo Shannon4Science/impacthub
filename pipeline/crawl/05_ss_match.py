@@ -250,7 +250,7 @@ def _score_candidate(row: dict[str, Any], author: dict[str, Any]) -> tuple[int, 
     hits = sorted(t for t in terms if _norm_ascii(t) and _norm_ascii(t) in papers)
     strong_hits = [h for h in hits if _norm_ascii(h) not in GENERIC_RESEARCH_TERMS]
     if strong_hits:
-        score += min(20, 7 * len(strong_hits))
+        score += min(20, 8 * len(strong_hits))
         notes.append("paper_terms:" + ",".join(strong_hits[:4]))
     elif hits:
         notes.append("generic_paper_terms:" + ",".join(hits[:4]))
@@ -419,6 +419,7 @@ async def auto_match_file(
     max_items: int = 0,
     search_limit: int = 5,
     max_queries: int = 0,
+    detail_limit: int = 2,
     plain_first: bool = False,
     concurrency: int = 1,
 ) -> dict[str, int]:
@@ -475,13 +476,23 @@ async def auto_match_file(
         if max_queries:
             queries = queries[:max_queries]
         for q in queries:
+            detail_checked = 0
             authors = await _search_authors(client, q, search_limit)
             for author in authors:
                 aid = str(author.get("authorId") or "")
                 if not aid or aid in seen:
                     continue
                 seen.add(aid)
-                score, notes = _score_candidate(row, author)
+                if not _name_matches(row.get("name") or "", author.get("name") or ""):
+                    score, notes = _score_candidate(row, author)
+                else:
+                    full_author = None
+                    if detail_checked < max(0, detail_limit):
+                        full_author = await _fetch_author(client, aid)
+                        detail_checked += 1
+                    score, notes = _score_candidate(row, full_author or author)
+                    if full_author:
+                        author = full_author
                 if score > best[0]:
                     best = (score, author, notes)
             if best[0] >= min_score:
@@ -602,6 +613,7 @@ async def main():
     parser.add_argument("--min-score", type=int, default=82, help="minimum validation score to accept a match")
     parser.add_argument("--search-limit", type=int, default=5, help="SS author-search candidates per query for --auto-match")
     parser.add_argument("--max-queries", type=int, default=0, help="max name-query variants per advisor; 0 means all")
+    parser.add_argument("--detail-limit", type=int, default=2, help="max name-matched candidates per query to refetch with papers for validation")
     parser.add_argument("--plain-first", action="store_true", help="try plain romanized names before school-qualified names")
     parser.add_argument("--concurrency", type=int, default=1, help="advisor tasks to keep in flight; SS HTTP calls still use global throttling")
     args = parser.parse_args()
@@ -647,6 +659,7 @@ async def main():
                 counts = await auto_match_file(
                     inp, out, min_score=args.min_score, max_items=args.max,
                     search_limit=args.search_limit, max_queries=args.max_queries,
+                    detail_limit=args.detail_limit,
                     plain_first=args.plain_first, concurrency=args.concurrency,
                 )
             else:
