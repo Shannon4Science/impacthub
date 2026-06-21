@@ -12,6 +12,8 @@ DATA_DIR.mkdir(exist_ok=True)
 DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR / 'impacthub.db'}"
 
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1"
+SEMANTIC_SCHOLAR_API_KEY: str = _os.environ.get("SEMANTIC_SCHOLAR_API_KEY", "")
+SEMANTIC_SCHOLAR_RPS: float = float(_os.environ.get("SEMANTIC_SCHOLAR_RPS", "1.0"))
 GITHUB_API = "https://api.github.com"
 HUGGINGFACE_API = "https://huggingface.co/api"
 

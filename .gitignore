@@ -10,6 +10,7 @@
 *.db-wal
 *.db.bak
 backend/data/recommendation_uploads/
+backend/data/ss_cache/
 
 # Python
 __pycache__/
@@ -48,6 +49,7 @@ pipeline/data/honor_enrich/config.yaml
 pipeline/data/honor_enrich/output/
 pipeline/data/xiaohongshu/config.yaml
 pipeline/data/xiaohongshu/output/
+pipeline/data/crawl/*.json
 
 # WeChat MP login cookie (sensitive — re-extract via DevTools when expired)
 pipeline/crawl/mentions_collect/.mp_cookie.json

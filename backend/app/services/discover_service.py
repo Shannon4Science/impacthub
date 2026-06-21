@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from app.config import SEMANTIC_SCHOLAR_API, GITHUB_API, GITHUB_TOKEN, HUGGINGFACE_API, OUTBOUND_PROXY
+from app.services.semantic_scholar_client import ss_get
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +48,12 @@ async def discover_from_scholar(scholar_id: str) -> DiscoveryResult:
 
     async with httpx.AsyncClient(timeout=20, proxy=OUTBOUND_PROXY) as client:
         # Fetch SS author info
-        resp = await client.get(
+        resp = await ss_get(
+            client,
             f"{SEMANTIC_SCHOLAR_API}/author/{scholar_id}",
             params={"fields": "name,paperCount,citationCount,hIndex,affiliations,url,externalIds"},
         )
-        if resp.status_code != 200:
+        if resp is None or resp.status_code != 200:
             result.errors.append(f"Semantic Scholar 作者 {scholar_id} 不存在")
             return result
 
@@ -312,11 +314,12 @@ async def _search_scholar_once(
     """Run one Semantic Scholar author search and return scored candidates."""
     scored: list[tuple[dict, int]] = []
     try:
-        resp = await client.get(
+        resp = await ss_get(
+            client,
             f"{SEMANTIC_SCHOLAR_API}/author/search",
             params={"query": query, "fields": SS_SEARCH_FIELDS, "limit": 50},
         )
-        if resp.status_code != 200:
+        if resp is None or resp.status_code != 200:
             return scored
 
         candidates = resp.json().get("data", [])
@@ -335,14 +338,15 @@ async def _fetch_candidate_papers(
 ) -> list[str]:
     """Fetch top paper titles for a candidate (sorted by citation count)."""
     try:
-        resp = await client.get(
+        resp = await ss_get(
+            client,
             f"{SEMANTIC_SCHOLAR_API}/author/{author_id}/papers",
             params={
                 "fields": "title,citationCount",
                 "limit": 20,
             },
         )
-        if resp.status_code != 200:
+        if resp is None or resp.status_code != 200:
             return []
         papers = resp.json().get("data", [])
         return [p.get("title", "") for p in papers if p.get("title")]

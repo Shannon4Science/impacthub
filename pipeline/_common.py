@@ -74,33 +74,7 @@ def setup_logging(log_path: str | Path) -> logging.Logger:
 # ───────────────────────── HTTP retry helpers ─────────────────────────
 
 import httpx  # noqa: E402  (after sys.path adjustment)
-
-
-async def ss_get(
-    client: httpx.AsyncClient,
-    url: str,
-    params: dict | None = None,
-    max_retries: int = 5,
-    timeout: float = 25.0,
-) -> httpx.Response | None:
-    """GET with exponential backoff on 429/5xx. Used for Semantic Scholar polling."""
-    log = logging.getLogger(__name__)
-    delay = 2.0
-    for attempt in range(max_retries):
-        try:
-            r = await client.get(url, params=params, timeout=timeout)
-            if r.status_code == 200:
-                return r
-            if r.status_code in (429,) or r.status_code >= 500:
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 30)
-                continue
-            return r  # other non-200 — caller decides
-        except Exception as exc:  # network glitches
-            log.debug("ss_get retry: %s", exc)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, 30)
-    return None
+from app.services.semantic_scholar_client import ss_get  # noqa: E402,F401
 
 
 # ───────────────────────── Per-user stage helper ─────────────────────────
@@ -199,7 +173,7 @@ async def run_per_user_stage(
 # ───────────────────────── Portfolio refresh ─────────────────────────
 
 
-async def refresh_portfolio(user_id: int) -> bool:
+async def refresh_portfolio(user_id: int, *, include_dblp: bool = True) -> bool:
     """Pull papers/DBLP/CCF/GitHub/HF + record snapshots + compute persona.
 
     Returns True if the refresh completed without an exception. Equivalent to the
@@ -222,7 +196,8 @@ async def refresh_portfolio(user_id: int) -> bool:
             return False
         try:
             await scholar_service.fetch_papers_for_user(db, user)
-            await dblp_service.fetch_dblp_papers_for_user(db, user)
+            if include_dblp:
+                await dblp_service.fetch_dblp_papers_for_user(db, user)
             await ccf_recompute_service.recompute_ccf_for_user(db, user)
             if user.github_username:
                 await github_service.fetch_repos_for_user(db, user)

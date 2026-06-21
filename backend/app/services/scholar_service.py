@@ -1,6 +1,5 @@
 """Semantic Scholar API client for fetching author papers and citation data."""
 
-import asyncio
 import logging
 from datetime import datetime
 
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import SEMANTIC_SCHOLAR_API, OUTBOUND_PROXY
 from app.models import Paper, User
 from app.data.ccf_venues import lookup_ccf_rank
+from app.services.semantic_scholar_client import ss_get
 
 logger = logging.getLogger(__name__)
 
@@ -18,20 +18,17 @@ AUTHOR_FIELDS = "authorId,name,paperCount,citationCount,hIndex,url"
 PAPER_FIELDS = "paperId,title,year,venue,citationCount,authors,url,externalIds"
 
 MAX_PAPERS_PER_REQUEST = 500
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 5  # seconds, doubles each retry
-
-
 async def _find_author_id(client: httpx.AsyncClient, scholar_id: str) -> str | None:
     """Resolve a Semantic Scholar author ID from a Scholar ID or name query."""
     if scholar_id.isdigit() or len(scholar_id) > 20:
         return scholar_id
-    resp = await client.get(
+    resp = await ss_get(
+        client,
         f"{SEMANTIC_SCHOLAR_API}/author/search",
         params={"query": scholar_id, "fields": AUTHOR_FIELDS, "limit": 1},
     )
-    if resp.status_code != 200:
-        logger.warning("Author search failed: %s", resp.text)
+    if resp is None or resp.status_code != 200:
+        logger.warning("Author search failed: %s", resp.text if resp else "no response")
         return None
     data = resp.json().get("data", [])
     return data[0]["authorId"] if data else None
@@ -49,11 +46,12 @@ async def fetch_papers_for_user(db: AsyncSession, user: User) -> list[Paper]:
             return []
 
         if not user.name or not user.avatar_url:
-            info_resp = await client.get(
+            info_resp = await ss_get(
+                client,
                 f"{SEMANTIC_SCHOLAR_API}/author/{author_id}",
                 params={"fields": AUTHOR_FIELDS},
             )
-            if info_resp.status_code == 200:
+            if info_resp is not None and info_resp.status_code == 200:
                 info = info_resp.json()
                 if not user.name:
                     user.name = info.get("name", "")
@@ -61,18 +59,11 @@ async def fetch_papers_for_user(db: AsyncSession, user: User) -> list[Paper]:
         all_papers_raw: list[dict] = []
         offset = 0
         while True:
-            resp = None
-            for attempt in range(MAX_RETRIES):
-                resp = await client.get(
-                    f"{SEMANTIC_SCHOLAR_API}/author/{author_id}/papers",
-                    params={"fields": PAPER_FIELDS, "limit": MAX_PAPERS_PER_REQUEST, "offset": offset},
-                )
-                if resp.status_code == 429:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    logger.warning("S2 rate limited at offset %d, retrying in %ds (attempt %d/%d)", offset, delay, attempt + 1, MAX_RETRIES)
-                    await asyncio.sleep(delay)
-                    continue
-                break
+            resp = await ss_get(
+                client,
+                f"{SEMANTIC_SCHOLAR_API}/author/{author_id}/papers",
+                params={"fields": PAPER_FIELDS, "limit": MAX_PAPERS_PER_REQUEST, "offset": offset},
+            )
             if resp is None or resp.status_code != 200:
                 logger.warning("Papers fetch failed at offset %d: %s", offset, resp.text[:200] if resp else "no response")
                 break
@@ -82,7 +73,6 @@ async def fetch_papers_for_user(db: AsyncSession, user: User) -> list[Paper]:
             if len(batch) < MAX_PAPERS_PER_REQUEST:
                 break
             offset += MAX_PAPERS_PER_REQUEST
-            await asyncio.sleep(1.0)  # Avoid rate limits between pages
 
         existing = {
             p.semantic_scholar_id: p

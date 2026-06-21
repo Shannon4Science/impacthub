@@ -18,6 +18,7 @@ from pydantic import BaseModel as BaseModel
 from app.services import scholar_service, github_service, hf_service, milestone_service
 from app.services import dblp_service, snapshot_service, ccf_recompute_service, persona_service
 from app.services.discover_service import discover_from_github, discover_from_scholar
+from app.services.semantic_scholar_client import ss_get
 from app.utils.paper_dedup import deduplicate_papers
 from app.deps import resolve_user
 from app.config import SEMANTIC_SCHOLAR_API, OUTBOUND_PROXY
@@ -60,7 +61,8 @@ async def search_scholars(
     # Fetch a generous batch from SS to allow sorting by citations
     fetch_limit = max(offset + limit, 30)  # always fetch at least 30
     async with httpx.AsyncClient(timeout=15, proxy=OUTBOUND_PROXY) as client:
-        resp = await client.get(
+        resp = await ss_get(
+            client,
             f"{SEMANTIC_SCHOLAR_API}/author/search",
             params={
                 "query": q,
@@ -68,8 +70,8 @@ async def search_scholars(
                 "limit": fetch_limit,
             },
         )
-        if resp.status_code != 200:
-            logger.warning("Scholar search failed: %s", resp.status_code)
+        if resp is None or resp.status_code != 200:
+            logger.warning("Scholar search failed: %s", resp.status_code if resp else "no response")
             return {"results": [], "total": 0, "offset": offset, "has_more": False}
         data = resp.json().get("data", [])
         total = resp.json().get("total", len(data))
@@ -81,11 +83,12 @@ async def search_scholars(
             if cached is not None:
                 return cached
             try:
-                r = await client.get(
+                r = await ss_get(
+                    client,
                     f"{SEMANTIC_SCHOLAR_API}/author/{author_id}/papers",
                     params={"fields": "s2FieldsOfStudy", "limit": 5},
                 )
-                if r.status_code != 200:
+                if r is None or r.status_code != 200:
                     return ""
                 papers = r.json().get("data", [])
                 fields: list[str] = []

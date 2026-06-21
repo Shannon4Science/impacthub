@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import SEMANTIC_SCHOLAR_API, OUTBOUND_PROXY
 from app.database import async_session
 from app.models import Paper, User, NotableCitation, CitationAnalysis
+from app.services.semantic_scholar_client import ss_get, ss_headers
 
 logger = logging.getLogger(__name__)
 
@@ -154,18 +155,12 @@ async def _analyze_paper(
     all_citations: list[dict] = []
     offset = 0
     while offset < MAX_CITATIONS_PER_PAPER:
-        resp = None
-        for attempt in range(3):
-            resp = await client.get(
-                f"{SEMANTIC_SCHOLAR_API}/paper/{ss_id}/citations",
-                params={"fields": CITATION_FIELDS, "limit": 500, "offset": offset},
-            )
-            if resp.status_code == 429:
-                delay = 5 * (2 ** attempt)
-                logger.warning("Rate limited on citations for %s, waiting %ds", ss_id, delay)
-                await asyncio.sleep(delay)
-                continue
-            break
+        resp = await ss_get(
+            client,
+            f"{SEMANTIC_SCHOLAR_API}/paper/{ss_id}/citations",
+            params={"fields": CITATION_FIELDS, "limit": 500, "offset": offset},
+            cache_ttl_seconds=24 * 3600,
+        )
         if resp is None or resp.status_code != 200:
             logger.warning("Citations fetch failed for %s: %s", ss_id, resp.status_code if resp else "no response")
             break
@@ -227,6 +222,7 @@ async def _analyze_paper(
                     f"{SEMANTIC_SCHOLAR_API}/author/batch",
                     params={"fields": AUTHOR_BATCH_FIELDS},
                     json={"ids": batch_ids},
+                    headers=ss_headers(),
                 )
                 if resp.status_code == 429:
                     delay = 5 * (2 ** attempt)

@@ -1,19 +1,19 @@
 """Build ImpactHub User profiles for advisors with known SS authorIds.
 
-Reads /tmp/ss_results_<batch>.json — agent-produced mapping of
-{advisor_id, name, scholar_id, confidence}.
+Reads /tmp/ss_results_validated_<batch>.json — validated mapping of
+{advisor_id, name, scholar_id, confidence, validated}.
 
 For each entry with a non-empty scholar_id:
   1. Skip if Advisor.impacthub_user_id is already set
   2. discover_from_scholar(scholar_id) → name/avatar/github/hf
   3. Create User row (or reuse if scholar_id collides)
-  4. Trigger portfolio refresh (papers/dblp/ccf/github/hf/milestones/snapshots/persona)
+  4. Trigger portfolio refresh (papers/ccf/github/hf/milestones/snapshots/persona)
   5. UPDATE Advisor.semantic_scholar_id + impacthub_user_id
 
 Usage:
     cd pipeline
-    python crawl/06_user_portfolios.py --input /tmp/ss_results_sjtu.json
-    python crawl/06_user_portfolios.py --input /tmp/ss_results_sjtu.json --dry-run
+    python crawl/06_user_portfolios.py --input /tmp/ss_results_validated_sjtu.json
+    python crawl/06_user_portfolios.py --input /tmp/ss_results_validated_sjtu.json --dry-run
 """
 import argparse
 import asyncio
@@ -94,23 +94,40 @@ async def process_entry(entry: dict, dry: bool) -> tuple[str, dict]:
     if not status.startswith("linked:"):
         return status, entry
     uid = int(status.split(":")[1])
-    ok = await refresh_portfolio(uid)
+    ok = await refresh_portfolio(uid, include_dblp=False)
     return ("portfolio_ok" if ok else "portfolio_fail"), entry
 
 
 async def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--input", required=True, help="JSON file produced by SS lookup agent")
+    p.add_argument("--input", required=True, help="validated JSON file produced by crawl/05_ss_match.py")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--min-confidence", choices=["high", "medium", "low"], default="medium")
+    p.add_argument(
+        "--allow-unvalidated",
+        action="store_true",
+        help="legacy escape hatch: allow rows without validated=true (not recommended)",
+    )
+    p.add_argument("--max", type=int, default=0, help="process at most N eligible entries")
     args = p.parse_args()
 
     await init_db()
     data = json.loads(Path(args.input).read_text(encoding="utf-8"))
     conf_rank = {"high": 3, "medium": 2, "low": 1, "none": 0, "": 0}
     cutoff = conf_rank[args.min_confidence]
-    work = [r for r in data if conf_rank.get(r.get("confidence", "none"), 0) >= cutoff and r.get("scholar_id")]
+    work = [
+        r for r in data
+        if conf_rank.get(r.get("confidence", "none"), 0) >= cutoff
+        and r.get("scholar_id")
+        and (args.allow_unvalidated or r.get("validated") is True)
+    ]
+    if args.max:
+        work = work[:args.max]
     log.info("input=%s total=%d eligible=%d (min_conf=%s)", args.input, len(data), len(work), args.min_confidence)
+    if not args.allow_unvalidated:
+        skipped_unvalidated = sum(1 for r in data if r.get("scholar_id") and r.get("validated") is not True)
+        if skipped_unvalidated:
+            log.warning("skipped %d row(s) without validated=true", skipped_unvalidated)
 
     counts: dict[str, int] = {}
     t0 = time.time()

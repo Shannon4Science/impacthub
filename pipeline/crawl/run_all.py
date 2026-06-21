@@ -151,13 +151,13 @@ async def probe_ss_match() -> StageState:
     from pipeline._common import SCHOOL_ALIAS
     for cn in ELITE_NAMES:
         short = next((k for k, v in SCHOOL_ALIAS.items() if v == cn and k != cn), cn).lower()
-        path = Path(f"/tmp/ss_results_{short}.json")
+        path = Path(f"/tmp/ss_results_validated_{short}.json")
         if not path.exists():
-            missing.append(f"{cn} (no agent output)")
+            missing.append(f"{cn} (no validated output)")
             continue
         try:
             data = _json.loads(path.read_text(encoding="utf-8"))
-            done += sum(1 for r in data if r.get("scholar_id"))
+            done += sum(1 for r in data if r.get("scholar_id") and r.get("validated") is True)
         except Exception:
             missing.append(f"{cn} (corrupt JSON)")
     return StageState("ss_match", expected, done, missing[:5])
@@ -191,7 +191,7 @@ def _stage6_cmds() -> list[list[str]]:
     cmds = []
     for cn in ELITE_NAMES:
         short = next((k for k, v in SCHOOL_ALIAS.items() if v == cn and k != cn), cn).lower()
-        inp = Path(f"/tmp/ss_results_{short}.json")
+        inp = Path(f"/tmp/ss_results_validated_{short}.json")
         if inp.exists():
             cmds.append(["python", "crawl/06_user_portfolios.py", "--input", str(inp)])
     return cmds

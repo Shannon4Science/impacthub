@@ -28,6 +28,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import SEMANTIC_SCHOLAR_API, OUTBOUND_PROXY
+from app.services.semantic_scholar_client import ss_get
 from app.database import async_session, init_db
 from app.models import User
 
@@ -62,7 +63,7 @@ async def _get_with_retry(client: httpx.AsyncClient, url: str, params: dict | No
 async def search_scholar(client: httpx.AsyncClient, name: str, affiliation: str) -> str | None:
     """Find the best-matching Semantic Scholar authorId for a given name+affiliation."""
     try:
-        resp = await _get_with_retry(
+        resp = await ss_get(
             client,
             f"{SEMANTIC_SCHOLAR_API}/author/search",
             params={
