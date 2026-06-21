@@ -9,7 +9,7 @@ from datetime import datetime
 
 from app.database import async_session, get_db
 from app.models import AdvisorSchool, AdvisorCollege, Advisor, AdvisorMention
-from app.services import advisor_crawler_service, advisor_chat_service
+from app.services import advisor_crawler_service, advisor_chat_service, recruitment_summary_service
 
 router = APIRouter()
 
@@ -51,7 +51,7 @@ class AdvisorBrief(BaseModel):
     college_id: int
     name: str
     title: str
-    is_doctoral_supervisor: bool
+    is_doctoral_supervisor: bool | None
     research_areas: list[str] | None
     homepage_url: str
     photo_url: str
@@ -62,6 +62,31 @@ class AdvisorBrief(BaseModel):
     impacthub_user_id: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+class AdvisorDetail(BaseModel):
+    id: int
+    school_id: int
+    school_name: str
+    college_id: int
+    college_name: str
+    name: str
+    name_en: str
+    title: str
+    is_doctoral_supervisor: bool | None
+    is_master_supervisor: bool | None
+    homepage_url: str
+    email: str
+    office: str
+    phone: str
+    photo_url: str
+    research_areas: list[str] | None
+    external_links: list[dict] | None = None
+    bio: str
+    education: list[dict] | None = None
+    honors: list[str] | None = None
+    recruiting_intent: str = ""
+    impacthub_user_id: int | None
 
 
 class MentionIn(BaseModel):
@@ -294,6 +319,39 @@ async def list_advisors_in_college(college_id: int, db: AsyncSession = Depends(g
         )
         for a in advisors
     ]
+
+
+@router.get("/advisor/advisors/{advisor_id}", response_model=AdvisorDetail)
+async def get_advisor(advisor_id: int, db: AsyncSession = Depends(get_db)):
+    advisor = await db.get(Advisor, advisor_id)
+    if not advisor:
+        raise HTTPException(404, "Advisor not found")
+    school = await db.get(AdvisorSchool, advisor.school_id)
+    college = await db.get(AdvisorCollege, advisor.college_id)
+    return AdvisorDetail(
+        id=advisor.id,
+        school_id=advisor.school_id,
+        school_name=school.name if school else "",
+        college_id=advisor.college_id,
+        college_name=college.name if college else "",
+        name=advisor.name,
+        name_en=advisor.name_en,
+        title=advisor.title,
+        is_doctoral_supervisor=advisor.is_doctoral_supervisor,
+        is_master_supervisor=advisor.is_master_supervisor,
+        homepage_url=advisor.homepage_url,
+        email=advisor.email,
+        office=advisor.office,
+        phone=advisor.phone,
+        photo_url=advisor.photo_url,
+        research_areas=advisor.research_areas,
+        external_links=advisor.external_links,
+        bio=advisor.bio,
+        education=advisor.education,
+        honors=advisor.honors,
+        recruiting_intent=advisor.recruiting_intent,
+        impacthub_user_id=advisor.impacthub_user_id,
+    )
 
 
 # ─────── Mentions (公众号 / 小红书 / 等舆情) ───────
@@ -671,3 +729,49 @@ async def bulk_add_mentions(payload: list[MentionIn], db: AsyncSession = Depends
         skipped_no_advisor=len(payload) - inserted,
         examples_skipped=skipped,
     )
+
+
+# ─────── Recruitment Summary (招生信息摘要) ───────
+
+class RecruitmentSummaryResponse(BaseModel):
+    recruitment_status: str
+    summary: str
+    latest_post_published_at: str | None
+    targets: list[dict]
+    research_directions: list[dict]
+    requirements: list[dict]
+    application_methods: list[dict]
+    timeline: list[dict]
+    evidence_posts: list[dict]
+    missing_information: list[str]
+    limitations: list[str]
+    cache_status: str
+    refreshed_at: str | None
+
+
+@router.get("/advisor/advisors/{advisor_id}/recruitment", response_model=RecruitmentSummaryResponse)
+async def get_advisor_recruitment_summary(advisor_id: int, db: AsyncSession = Depends(get_db)):
+    summary = await recruitment_summary_service.get_recruitment_summary(db, advisor_id)
+    if not summary:
+        raise HTTPException(404, "未找到招生信息")
+    return summary
+
+
+class ImportRecruitmentRequest(BaseModel):
+    advisor_id: int
+    summary_json: dict
+    candidates_jsonl: list[dict]
+
+
+@router.post("/advisor/recruitment/import")
+async def import_recruitment_summary(payload: ImportRecruitmentRequest, db: AsyncSession = Depends(get_db)):
+    advisor = await db.get(Advisor, payload.advisor_id)
+    if not advisor:
+        raise HTTPException(404, "Advisor not found")
+    await recruitment_summary_service.import_xhs_recruitment_summary(
+        db,
+        advisor_id=payload.advisor_id,
+        xhs_summary_json=payload.summary_json,
+        xhs_candidates_jsonl=payload.candidates_jsonl,
+    )
+    return {"status": "imported", "advisor_id": payload.advisor_id}

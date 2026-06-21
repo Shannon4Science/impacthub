@@ -529,7 +529,12 @@ function AdvisorCard({ advisor }: { advisor: AdvisorBrief }) {
       {/* Main */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <span className="truncate font-semibold text-gray-900">{advisor.name}</span>
+          <Link
+            to={`/advisor/advisors/${advisor.id}`}
+            className="truncate font-semibold text-gray-900 hover:text-indigo-600"
+          >
+            {advisor.name}
+          </Link>
           {advisor.title && (
             <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">{advisor.title}</span>
           )}

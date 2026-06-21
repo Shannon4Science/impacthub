@@ -1,0 +1,111 @@
+# Copy to config.yaml for local development.
+# Do not commit real cookies, tokens, or private account data.
+
+target:
+  # Optional manually curated aliases or initials for the current advisor.
+  # CLI --advisor-alias values are appended to this list.
+  aliases: []
+
+api:
+  # Official TikHub API host. If your network cannot reach it, probe https://api.tikhub.dev.
+  base_url: "https://api.tikhub.io"
+  token_env: TIKHUB_API_KEY
+  timeout_seconds: 30
+  qps: 10
+  retry_attempts: 3
+  retry_base_sleep_seconds: 1
+  retry_max_sleep_seconds: 8
+
+crawler:
+  source: xiaohongshu
+  search_backend: app
+  comment_backend: app
+  detail_backend: web_v2_feed_v2
+  output_raw_jsonl: data/raw/xhs_notes.jsonl
+  log_file: data/logs/crawler.log
+  error_log_jsonl: data/logs/crawler_errors.jsonl
+  continue_on_error: true
+  max_notes_per_query: 8
+  request_delay_seconds: 3
+  fetch_detail: true
+  detail_kind: auto
+  fetch_comments: false
+  max_comments_per_note: 0
+  comment_sort_strategy: 2
+
+search:
+  pages: 1
+  sort_type: general
+  note_type: "不限"
+  time_filter: "不限"
+  source: explore_feed
+  ai_mode: 0
+  supplemental_trigger_min_new_notes: 0
+  primary_query_templates:
+    - "{school_name} {advisor_name} 招生"
+    - "{advisor_name} 课题组 招生"
+    - "{advisor_name} 实习生招募"
+  supplemental_query_templates: []
+
+dedup:
+  keys:
+    - note_id
+    - url
+
+llm:
+  provider: anthropic  # openai-compatible or anthropic
+  api_key_env: ANTHROPIC_API_KEY
+  base_url: "https://api.anthropic.com"
+  model: claude-sonnet-4-6
+  timeout_seconds: 360
+  max_retries: 0
+  max_tokens: 8000
+  temperature: 0
+
+recruitment:
+  output_candidates_jsonl: data/processed/xhs_recruitment_candidates.jsonl
+  output_summary_json: data/processed/xhs_recruitment_summary.json
+  max_posts_for_summary: 4
+  recent_days: 365
+  stale_days: 730
+  required_keywords:
+    - 招生
+    - 招收
+    - 招募
+    - RA
+    - 科研助理
+    - 实习生
+    - intern
+    - internship
+  excluded_keywords:
+    - 怎么样
+    - 避雷
+    - 求问
+    - 求求
+    - 吐槽
+    - 曝光
+    - "818"
+    - 八一八
+    - 质疑
+    - 致zhi
+    - 快跑
+    - 评价
+    - 口碑
+  keywords:
+    - 招生
+    - 招收
+    - 招募
+    - 申请
+    - 套磁
+    - 博士
+    - 硕士
+    - 直博
+    - 推免
+    - RA
+    - 科研助理
+    - 实习生
+    - intern
+    - internship
+
+pipeline:
+  fail_on_zero_primary: true

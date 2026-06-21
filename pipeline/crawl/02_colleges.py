@@ -3,8 +3,10 @@
 Usage:
     cd pipeline
     python crawl/02_colleges.py
+    python crawl/02_colleges.py --school-name 浙江大学 --force
 """
 
+import argparse
 import asyncio
 import sys
 import time
@@ -23,15 +25,25 @@ LOG_PATH = Path("/tmp/advisor_crawl_colleges.log")
 
 
 async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--school-id", type=int, help="Limit to one school")
+    parser.add_argument("--school-name", help="Limit to one school by exact Chinese name")
+    parser.add_argument("--force", action="store_true", help="Process targeted school even if already crawled")
+    args = parser.parse_args()
+
     log = setup_logging(LOG_PATH)
 
     # Load all schools that haven't been crawled yet
     async with async_session() as db:
+        stmt = select(AdvisorSchool).where(AdvisorSchool.homepage_url != "")
+        if args.school_id:
+            stmt = stmt.where(AdvisorSchool.id == args.school_id)
+        if args.school_name:
+            stmt = stmt.where(AdvisorSchool.name == args.school_name)
+        if not args.force:
+            stmt = stmt.where(AdvisorSchool.colleges_crawled_at.is_(None))
         schools = (await db.execute(
-            select(AdvisorSchool).where(
-                AdvisorSchool.homepage_url != "",
-                AdvisorSchool.colleges_crawled_at.is_(None),
-            ).order_by(AdvisorSchool.is_985.desc(), AdvisorSchool.is_211.desc())
+            stmt.order_by(AdvisorSchool.is_985.desc(), AdvisorSchool.is_211.desc())
         )).scalars().all()
 
     total = len(schools)
@@ -58,14 +70,17 @@ async def main():
                     db, school, fetch_advisors=False,
                 )
                 await db.commit()
-                if result["colleges_added"] == 0:
+                colleges_changed = result["colleges_added"] + result.get("colleges_updated", 0)
+                if colleges_changed == 0:
                     failures.append((s.name, result.get("errors", [])))
                     log.warning("  → 0 colleges added: %s", result.get("errors"))
                 else:
                     successes += 1
                     log.info(
-                        "  → +%d colleges (%s errors)",
-                        result["colleges_added"], len(result.get("errors", [])),
+                        "  → +%d colleges, updated=%d (%s errors)",
+                        result["colleges_added"],
+                        result.get("colleges_updated", 0),
+                        len(result.get("errors", [])),
                     )
         except Exception as e:
             log.exception("  → CRASHED: %s", e)

@@ -327,8 +327,8 @@ class Advisor(Base):
     name: Mapped[str] = mapped_column(String(80))
     name_en: Mapped[str] = mapped_column(String(120), default="")
     title: Mapped[str] = mapped_column(String(60), default="")               # 教授 / 副教授 / 讲师 / 研究员 / 副研究员 / 助理研究员
-    is_doctoral_supervisor: Mapped[bool] = mapped_column(Boolean, default=False)  # 博导
-    is_master_supervisor: Mapped[bool] = mapped_column(Boolean, default=False)    # 硕导
+    is_doctoral_supervisor: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)  # 博导
+    is_master_supervisor: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)    # 硕导
 
     # Contact
     homepage_url: Mapped[str] = mapped_column(String(500), default="")
@@ -339,6 +339,7 @@ class Advisor(Base):
 
     # Academic profile
     research_areas: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)  # ["NLP", "对齐"]
+    external_links: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)   # academic/profile links found on homepage
     bio: Mapped[str] = mapped_column(Text, default="")
     education: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)        # parsed timeline
     honors: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)           # 杰青/长江/院士
@@ -348,6 +349,11 @@ class Advisor(Base):
     grad_quota_master: Mapped[int] = mapped_column(Integer, default=0)   # 硕士名额
     grad_quota_phd: Mapped[int] = mapped_column(Integer, default=0)      # 博士名额
     accepts_recommended: Mapped[bool | None] = mapped_column(Boolean, nullable=True)  # 是否招保研
+
+    # XHS Recruitment Summary (小红书招生摘要)
+    recruitment_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    recruitment_summary_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    recruitment_summary_status: Mapped[str] = mapped_column(String(20), default="")  # found_current/found_stale/not_found
 
     # External linkage (filled by Layer B)
     semantic_scholar_id: Mapped[str] = mapped_column(String(100), default="")
@@ -368,6 +374,43 @@ class Advisor(Base):
     college: Mapped["AdvisorCollege"] = relationship(back_populates="advisors")
 
 
+class AdvisorEmbeddingMetadata(Base):
+    """Metadata for advisor vectors stored in sqlite-vec."""
+    __tablename__ = "advisor_embedding_metadata"
+
+    advisor_id: Mapped[int] = mapped_column(ForeignKey("advisors.id"), primary_key=True)
+    embedding_type: Mapped[str] = mapped_column(String(20), default="research_profile")
+    source_hash: Mapped[str] = mapped_column(String(64), default="")
+    source_text: Mapped[str] = mapped_column(Text, default="")
+    model: Mapped[str] = mapped_column(String(100), default="")
+    dimensions: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    advisor: Mapped["Advisor"] = relationship()
+
+
+class RecommendationSession(Base):
+    """One resume recommendation job and its persisted result."""
+    __tablename__ = "recommendation_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default="queued")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(String(300), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    resume_filename: Mapped[str] = mapped_column(String(300), default="")
+    requirements: Mapped[str] = mapped_column(Text, default="")
+    top_n: Mapped[int] = mapped_column(Integer, default=3)
+    school_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    college_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resume_text: Mapped[str] = mapped_column(Text, default="")
+    resume_summary_json: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class AdvisorMention(Base):
     """A 公众号 article / 小红书 post / 知乎 answer / forum thread that mentions
     a specific advisor. The collection side (你来负责) is decoupled — this table
@@ -383,6 +426,8 @@ class AdvisorMention(Base):
     pending_advisor_name: Mapped[str] = mapped_column(String(80), default="")
     pending_school_name: Mapped[str] = mapped_column(String(120), default="")
     source: Mapped[str] = mapped_column(String(30))            # wechat / xiaohongshu / zhihu / forum / other
+    external_id: Mapped[str] = mapped_column(String(120), default="")  # stable source id, e.g. XHS note_id
+    mention_type: Mapped[str] = mapped_column(String(30), default="general")  # general / recruitment
     source_account: Mapped[str] = mapped_column(String(120), default="")  # 公众号名 / 小红书账号
     title: Mapped[str] = mapped_column(Text, default="")
     url: Mapped[str] = mapped_column(String(500), default="")
@@ -398,6 +443,25 @@ class AdvisorMention(Base):
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    advisor: Mapped["Advisor"] = relationship()
+
+
+class XhsCrawlRun(Base):
+    """One Xiaohongshu recruitment crawl attempt for a single advisor."""
+    __tablename__ = "xhs_crawl_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    advisor_id: Mapped[int] = mapped_column(ForeignKey("advisors.id"))
+    status: Mapped[str] = mapped_column(String(20), default="searching")  # searching / summarizing / done / failed
+    search_query: Mapped[str] = mapped_column(Text, default="")
+    raw_note_count: Mapped[int] = mapped_column(Integer, default=0)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    mentions_inserted: Mapped[int] = mapped_column(Integer, default=0)
+    summary_updated: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     advisor: Mapped["Advisor"] = relationship()
 

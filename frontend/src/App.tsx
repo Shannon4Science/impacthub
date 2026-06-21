@@ -9,6 +9,8 @@ import RecruitPage from "./pages/RecruitPage";
 import AdvisorPage from "./pages/AdvisorPage";
 import AdvisorChatPage from "./pages/AdvisorChatPage";
 import MentionsFeedPage from "./pages/MentionsFeedPage";
+import AdvisorDetailPage from "./pages/AdvisorDetailPage";
+import RecommendationPage from "./pages/RecommendationPage";
 import PipelinePage from "./pages/PipelinePage";
 import PipelineDemoPage from "./pages/PipelineDemoPage";
 import DocsPage from "./pages/DocsPage";
@@ -89,6 +91,7 @@ function TopBar() {
           <NavLink to="/advisor" current={location.pathname} label="保研导师" />
           <NavLink to="/advisor/chat" current={location.pathname} label="导师推荐 AI" />
           <NavLink to="/advisor/mentions" current={location.pathname} label="口碑墙" />
+          <NavLink to="/recommendation" current={location.pathname} label="导师推荐" />
           <NavLink to="/pipeline" current={location.pathname} label="Pipeline" />
           <NavLink to="/pipeline/demo" current={location.pathname} label="单人验收" />
           <NavLink to="/users" current={location.pathname} label="用户列表" />
@@ -119,6 +122,8 @@ export default function App() {
         <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="/pipeline/demo" element={<PipelineDemoPage />} />
         <Route path="/advisor/schools/:schoolId" element={<AdvisorPage />} />
+        <Route path="/advisor/advisors/:advisorId" element={<AdvisorDetailPage />} />
+        <Route path="/recommendation" element={<RecommendationPage />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/profile/:id" element={<ProfilePage />} />
         <Route path="/milestones/:id" element={<MilestonePage />} />

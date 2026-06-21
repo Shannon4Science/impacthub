@@ -1,8 +1,8 @@
-"""Stage 3 — crawl advisor stubs for every college whose `advisors_crawled_at` is NULL.
+"""Stage 3 — crawl advisor stubs for colleges.
 
 Usage:
     cd pipeline
-    python crawl/03_advisor_stubs.py [--school-id N] [--max N]
+    python crawl/03_advisor_stubs.py [--school-id N | --school-name NAME] [--max N] [--force]
 """
 
 import argparse
@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from pipeline._common import setup_logging  # noqa: E402  (also adds backend/ to sys.path)
 
-from sqlalchemy import func, select, update  # noqa: E402
+from sqlalchemy import func, or_, select, update  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from app.database import async_session  # noqa: E402
@@ -38,18 +38,30 @@ async def update_school_count(db: AsyncSession, school_id: int):
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--school-id", type=int, help="Limit to one school")
+    parser.add_argument("--school-name", help="Limit to one school by exact Chinese name")
+    parser.add_argument("--college", help="Limit by college name LIKE pattern; comma-separated patterns allowed")
     parser.add_argument("--max", type=int, default=0, help="Stop after N colleges (0 = no limit)")
+    parser.add_argument("--force", action="store_true", help="Re-crawl targeted colleges even if already crawled")
     args = parser.parse_args()
+    if args.force and not (args.school_id or args.school_name):
+        parser.error("--force requires --school-id or --school-name")
 
     log = setup_logging(LOG_PATH)
 
     async with async_session() as db:
         stmt = select(AdvisorCollege).where(
-            AdvisorCollege.homepage_url != "",
-            AdvisorCollege.advisors_crawled_at.is_(None),
+            or_(AdvisorCollege.homepage_url != "", AdvisorCollege.faculty_list_url != ""),
         ).order_by(AdvisorCollege.school_id, AdvisorCollege.id)
+        if not args.force:
+            stmt = stmt.where(AdvisorCollege.advisors_crawled_at.is_(None))
         if args.school_id:
             stmt = stmt.where(AdvisorCollege.school_id == args.school_id)
+        if args.school_name:
+            stmt = stmt.join(AdvisorSchool).where(AdvisorSchool.name == args.school_name)
+        if args.college:
+            college_names = [name.strip() for name in args.college.split(",") if name.strip()]
+            if college_names:
+                stmt = stmt.where(or_(*[AdvisorCollege.name.like(f"%{name}%") for name in college_names]))
         if args.max:
             stmt = stmt.limit(args.max)
         colleges = (await db.execute(stmt)).scalars().all()

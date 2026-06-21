@@ -8,6 +8,8 @@
 # but never track the SQLite WAL/SHM sidecar files (they change every second).
 *.db-shm
 *.db-wal
+*.db.bak
+backend/data/recommendation_uploads/
 
 # Python
 __pycache__/
@@ -44,6 +46,12 @@ Thumbs.db
 # Honor enrichment local config & outputs (config holds API key)
 pipeline/data/honor_enrich/config.yaml
 pipeline/data/honor_enrich/output/
+pipeline/data/xiaohongshu/config.yaml
+pipeline/data/xiaohongshu/output/
 
 # WeChat MP login cookie (sensitive — re-extract via DevTools when expired)
 pipeline/crawl/mentions_collect/.mp_cookie.json
+
+# Local agent instructions
+CLAUDE.md
+AGENTS.md

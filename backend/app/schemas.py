@@ -33,6 +33,12 @@ class UserUpdate(BaseModel):
     feishu_webhook: str | None = None
 
 
+class CoverLetterResponse(BaseModel):
+    content: str
+    advisor_name: str
+    generated_at: datetime
+
+
 class DiscoveryStatus(BaseModel):
     user: UserOut
     scholar_found: bool

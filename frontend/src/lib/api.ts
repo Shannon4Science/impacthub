@@ -5,7 +5,36 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json" },
     ...init,
   });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text();
+    let message = text || `API error: ${res.status}`;
+    try {
+      const data = JSON.parse(text) as { detail?: string };
+      message = data.detail || message;
+    } catch {
+      message = text || message;
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let message = text || `API error: ${res.status}`;
+    try {
+      const data = JSON.parse(text) as { detail?: string };
+      message = data.detail || message;
+    } catch {
+      message = text || message;
+    }
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -482,7 +511,7 @@ export interface AdvisorBrief {
   college_id: number;
   name: string;
   title: string;
-  is_doctoral_supervisor: boolean;
+  is_doctoral_supervisor: boolean | null;
   research_areas: string[] | null;
   homepage_url: string;
   photo_url: string;
@@ -491,6 +520,41 @@ export interface AdvisorBrief {
   bio?: string;
   email?: string;
   impacthub_user_id?: number | null;
+}
+
+export interface AdvisorDetail {
+  id: number;
+  school_id: number;
+  school_name: string;
+  college_id: number;
+  college_name: string;
+  name: string;
+  name_en: string;
+  title: string;
+  is_doctoral_supervisor: boolean | null;
+  is_master_supervisor: boolean | null;
+  homepage_url: string;
+  email: string;
+  office: string;
+  phone: string;
+  photo_url: string;
+  research_areas: string[] | null;
+  external_links?: Array<{
+    kind: string;
+    url: string;
+    label?: string;
+    reason?: string;
+  }> | null;
+  bio: string;
+  education?: Array<{
+    degree: string;
+    year: number | null;
+    institution: string;
+    advisor: string;
+  }> | null;
+  honors?: string[] | null;
+  recruiting_intent?: string;
+  impacthub_user_id: number | null;
 }
 
 export interface AdvisorMention {
@@ -654,6 +718,136 @@ export interface AdvisorDirectoryStats {
   total_advisors: number;
   by_province: Record<string, number>;
   by_school_type: Record<string, number>;
+}
+
+// ---------- Recruitment Summary (招生信息摘要) ----------
+
+export interface RecruitmentSummaryResponse {
+  recruitment_status: string;
+  summary: string;
+  latest_post_published_at: string | null;
+  targets: Array<{
+    type: string;
+    details: string[];
+    source_note_ids: string[];
+    time_sensitivity: string;
+  }>;
+  research_directions: Array<{
+    direction: string;
+    details: string[];
+    source_note_ids: string[];
+  }>;
+  requirements: Array<{
+    requirement: string;
+    source_note_ids: string[];
+  }>;
+  application_methods: Array<{
+    method: string;
+    source_note_ids: string[];
+    is_primary: boolean;
+  }>;
+  timeline: Array<{
+    time: string;
+    detail: string;
+    source_note_ids: string[];
+  }>;
+  evidence_posts: Array<{
+    note_id: string;
+    title: string;
+    url: string;
+    published_at: string | null;
+    relation_to_target: string;
+    time_sensitivity: string;
+    content?: string;
+  }>;
+  missing_information: string[];
+  limitations: string[];
+  cache_status: string;
+  refreshed_at: string | null;
+}
+
+export type RecommendationJobStatus =
+  | "queued"
+  | "parsing"
+  | "extracting"
+  | "embedding"
+  | "recommending"
+  | "completed"
+  | "failed";
+
+export interface ResumeProjectSummary {
+  name?: string;
+  description?: string;
+  tech_stack?: string[];
+  achievements?: string;
+}
+
+export interface ResumeEducationSummary {
+  school?: string;
+  major?: string;
+  degree?: string;
+  gpa?: string;
+}
+
+export interface RecommendationResumeSummary {
+  education: ResumeEducationSummary[];
+  research_interests: string[];
+  projects: ResumeProjectSummary[];
+  publications: string[];
+  skills: string[];
+  honors: string[];
+}
+
+export interface RecommendationAdvisor {
+  id: number;
+  name: string;
+  title: string;
+  school_id: number;
+  school_name: string;
+  college_id: number;
+  college_name: string;
+  is_doctoral_supervisor: boolean | null;
+  is_master_supervisor: boolean | null;
+  research_areas: string[];
+  homepage_url: string;
+  photo_url: string;
+  h_index: number;
+  citation_count: number;
+  accepts_recommended: boolean | null;
+  recruitment_summary_status: string;
+}
+
+export interface AdvisorRecommendation {
+  advisor: RecommendationAdvisor;
+  similarity: number;
+  raw_cosine: number;
+  matched_keywords: string[];
+  explanation: string;
+}
+
+export interface RecommendationUploadResponse {
+  session_id: string;
+  status: RecommendationJobStatus;
+}
+
+export interface RecommendationStatusResponse {
+  session_id: string;
+  status: RecommendationJobStatus;
+  progress: number;
+  message: string;
+  error: string | null;
+}
+
+export interface RecommendationResult {
+  session_id: string;
+  recommendations: AdvisorRecommendation[];
+  resume_summary: RecommendationResumeSummary;
+}
+
+export interface CoverLetterResponse {
+  content: string;
+  advisor_name: string;
+  generated_at: string;
 }
 
 // ---------- Recruit (B2B 猎头查询) ----------
@@ -963,6 +1157,9 @@ export const api = {
   listAdvisorsInCollege(collegeId: number) {
     return request<AdvisorBrief[]>(`/advisor/colleges/${collegeId}/advisors`);
   },
+  getAdvisor(advisorId: number) {
+    return request<AdvisorDetail>(`/advisor/advisors/${advisorId}`);
+  },
   getPipelineStatus() {
     return request<PipelineStatus>("/pipeline/status");
   },
@@ -975,6 +1172,32 @@ export const api = {
   },
   listAdvisorMentions(advisorId: number) {
     return request<AdvisorMention[]>(`/advisor/advisors/${advisorId}/mentions`);
+  },
+  uploadResumeForRecommendation(file: File, params: {
+    requirements: string;
+    top_n?: number;
+    school_id?: number;
+    college_id?: number;
+  }) {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("requirements", params.requirements);
+    if (params.top_n != null) form.append("top_n", String(params.top_n));
+    if (params.school_id != null) form.append("school_id", String(params.school_id));
+    if (params.college_id != null) form.append("college_id", String(params.college_id));
+    return requestForm<RecommendationUploadResponse>("/recommendation/upload-resume", form);
+  },
+  getRecommendationStatus(sessionId: string) {
+    return request<RecommendationStatusResponse>(`/recommendation/status/${sessionId}`);
+  },
+  getRecommendationResult(sessionId: string) {
+    return request<RecommendationResult>(`/recommendation/result/${sessionId}`);
+  },
+  generateCoverLetter(sessionId: string, advisorId: number) {
+    return request<CoverLetterResponse>(
+      `/recommendation/sessions/${sessionId}/advisors/${advisorId}/cover-letter`,
+      { method: "POST" }
+    );
   },
   advisorChat(messages: { role: "user" | "assistant"; content: string }[]) {
     return request<AdvisorChatResponse>(`/advisor/chat`, {
@@ -1051,5 +1274,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     });
+  },
+  getAdvisorRecruitment(advisorId: number) {
+    return request<RecruitmentSummaryResponse>(`/advisor/advisors/${advisorId}/recruitment`);
   },
 };
