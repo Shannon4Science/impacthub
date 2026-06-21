@@ -265,6 +265,15 @@ def _score_candidate(row: dict[str, Any], author: dict[str, Any]) -> tuple[int, 
     if not has_school_affiliation and len(strong_hits) < 2:
         score -= 15
         notes.append("insufficient_domain_evidence")
+    elif (
+        not has_school_affiliation
+        and len(strong_hits) >= 2
+        and h_index >= 5
+        and paper_count >= 10
+        and citation_count >= 100
+    ):
+        score += 4
+        notes.append("domain_productivity_combo")
 
     return score, notes
 
